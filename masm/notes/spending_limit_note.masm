@@ -1,0 +1,12 @@
+use.external_contract::spending_limit_contract
+
+begin
+    push.100
+    # => [100]
+    exec.spending_limit_contract::set_spending_limit
+    # => []
+
+    push.200
+    # => [200]
+    exec.spending_limit_contract::verify_spending_limit
+end
