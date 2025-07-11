@@ -1,0 +1,6 @@
+use.external_contract::multisig_contract
+
+# Advice map => {0: new threshold}
+begin
+    call.multisig_contract::change_threshold
+end

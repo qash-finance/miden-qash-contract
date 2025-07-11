@@ -1,5 +1,0 @@
-use.external_contract::spending_limit_contract
-
-begin
-    exec.spending_limit_contract::get_spending_limit
-end

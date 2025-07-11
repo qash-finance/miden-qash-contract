@@ -4,30 +4,33 @@ use miden_assembly::{
 };
 use miden_client::{
     Client, ClientError,
-    account::{Account, AccountBuilder, AccountId, AccountStorageMode, AccountType, StorageSlot},
+    account::{
+        Account, AccountBuilder, AccountId, AccountStorageMode, AccountType, StorageMap,
+        StorageSlot,
+    },
     auth::AuthSecretKey,
     builder::ClientBuilder,
     crypto::SecretKey,
     keystore::FilesystemKeyStore,
     note::{
         Note, NoteAssets, NoteExecutionHint, NoteExecutionMode, NoteInputs, NoteMetadata,
-        NoteRecipient, NoteRelevance, NoteScript, NoteTag, NoteType,
+        NoteRecipient, NoteScript, NoteTag, NoteType,
     },
     rpc::{Endpoint, TonicRpcClient},
-    store::{InputNoteRecord, NoteFilter},
     transaction::{OutputNote, TransactionRequestBuilder, TransactionScript},
 };
+use miden_crypto::rand::FeltRng;
 use miden_crypto::{Felt, Word};
 use miden_lib::{
     account::{auth::RpoFalcon512, wallets::BasicWallet},
     transaction::TransactionKernel,
 };
-use miden_objects::account::AccountComponent;
+use miden_objects::{account::AccountComponent, vm::AdviceMap};
 use rand::{RngCore, rngs::StdRng};
 use serde::de::value::Error;
 use std::sync::Arc;
 
-use miden_crypto::rand::FeltRng;
+use crate::constants::{THRESHOLD, TOTAL_WEIGHT};
 
 // Clears keystore & default sqlite file
 pub async fn delete_keystore_and_store() {
@@ -158,22 +161,48 @@ pub async fn create_basic_account(
     Ok((account, key_pair))
 }
 
-// Contract builder helper function
-pub async fn create_public_immutable_contract(
+pub async fn create_multisig_account(
     client: &mut Client,
     account_code: &String,
-) -> Result<(Account, Word), ClientError> {
+    num_signers: usize,
+    signer_weights: Vec<usize>,
+) -> Result<(Account, Word, Vec<Word>, Vec<SecretKey>), ClientError> {
     let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
 
-    let counter_component = AccountComponent::compile(
+    // generate keypairs for signers
+    let (signers_secret_keys, signer_pub_keys) = generate_keypairs(num_signers, client);
+
+    let mut storage_map_signers = StorageMap::new();
+    let storage_map_message_hash = StorageMap::new();
+    // loop through signers pub key
+    for (i, pub_key) in signer_pub_keys.iter().enumerate() {
+        let weight = signer_weights[i];
+        storage_map_signers.insert(
+            pub_key.into(),
+            [
+                Felt::new(weight as u64),
+                Felt::new(0 as u64),
+                Felt::new(0 as u64),
+                Felt::new(0 as u64),
+            ],
+        );
+    }
+
+    let storage_slot_map_signers = StorageSlot::Map(storage_map_signers.clone());
+    let storage_slot_map_message_hash = StorageSlot::Map(storage_map_message_hash.clone());
+
+    let threshold = Felt::new(THRESHOLD as u64);
+    let total_weight = Felt::new(TOTAL_WEIGHT as u64);
+
+    let multisig_component = AccountComponent::compile(
         account_code.clone(),
         assembler.clone(),
-        vec![StorageSlot::Value([
-            Felt::new(0),
-            Felt::new(0),
-            Felt::new(0),
-            Felt::new(0),
-        ])],
+        vec![
+            StorageSlot::Value([threshold, Felt::new(0), Felt::new(0), Felt::new(0)]),
+            StorageSlot::Value([total_weight, Felt::new(0), Felt::new(0), Felt::new(0)]),
+            storage_slot_map_signers,
+            storage_slot_map_message_hash,
+        ],
     )
     .unwrap()
     .with_supports_all_types();
@@ -183,15 +212,41 @@ pub async fn create_public_immutable_contract(
     let mut init_seed = [0_u8; 32];
     client.rng().fill_bytes(&mut init_seed);
 
-    let (counter_contract, counter_seed) = AccountBuilder::new(init_seed)
+    let (multisig_contract, multisig_seed) = AccountBuilder::new(init_seed)
         .anchor((&anchor_block).try_into().unwrap())
         .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Public)
-        .with_component(counter_component.clone())
+        .with_component(multisig_component.clone())
         .build()
         .unwrap();
 
-    Ok((counter_contract, counter_seed))
+    Ok((
+        multisig_contract,
+        multisig_seed,
+        signer_pub_keys,
+        signers_secret_keys,
+    ))
+}
+
+pub fn generate_keypairs(num_keys: usize, client: &mut Client) -> (Vec<SecretKey>, Vec<Word>) {
+    let mut keys = Vec::new();
+    let mut signer_pub_keys: Vec<Word> = Vec::new();
+
+    for _ in 0..num_keys {
+        let key = SecretKey::with_rng(client.rng());
+        keys.push(key.clone());
+
+        signer_pub_keys.push(key.public_key().into());
+    }
+
+    (keys, signer_pub_keys)
+}
+
+pub fn generate_keypair(client: &mut Client) -> (SecretKey, Word) {
+    let private_key = SecretKey::with_rng(client.rng());
+    let public_key = private_key.public_key();
+
+    (private_key, public_key.into())
 }
 
 pub fn create_tx_script(
@@ -210,37 +265,23 @@ pub fn create_tx_script(
     Ok(tx_script)
 }
 
-// Waits for note
-pub async fn wait_for_note(
+pub async fn build_and_submit_tx(
+    tx_script: TransactionScript,
+    advice_map: AdviceMap,
     client: &mut Client,
-    account_id: Option<Account>,
-    expected: &Note,
+    account_id: AccountId,
 ) -> Result<(), ClientError> {
-    use tokio::time::{Duration, sleep};
+    let tx_add_signer_request = TransactionRequestBuilder::new()
+        .with_custom_script(tx_script)
+        .extend_advice_map(advice_map)
+        .build()
+        .unwrap();
 
-    loop {
-        client.sync_state().await?;
+    let tx_result = client
+        .new_transaction(account_id, tx_add_signer_request)
+        .await
+        .unwrap();
 
-        // Notes that can be consumed right now
-        let consumable: Vec<(InputNoteRecord, Vec<(AccountId, NoteRelevance)>)> = client
-            .get_consumable_notes(account_id.as_ref().map(|acc| acc.id()))
-            .await?;
-
-        // Notes submitted that are now committed
-        let committed: Vec<InputNoteRecord> = client.get_input_notes(NoteFilter::Committed).await?;
-
-        // Check both vectors
-        let found = consumable.iter().any(|(rec, _)| rec.id() == expected.id())
-            || committed.iter().any(|rec| rec.id() == expected.id());
-
-        if found {
-            println!("✅ note found {}", expected.id().to_hex());
-            break;
-        }
-
-        println!("Note {} not found. Waiting...", expected.id().to_hex());
-        sleep(Duration::from_secs(2)).await;
-    }
-
+    let _ = client.submit_transaction(tx_result).await?;
     Ok(())
 }

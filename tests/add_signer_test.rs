@@ -1,8 +1,8 @@
 use std::{fs, path::Path};
 
 use masm_project_template::{
-    common::{create_multisig_account, generate_keypair},
-    constants::{SIGNER_WEIGHTS, THRESHOLD},
+    common::{build_and_submit_tx, create_multisig_account, generate_keypair},
+    constants::{SIGNER_WEIGHTS, SIGNERS_SLOT, THRESHOLD},
 };
 
 use miden_client_tools::{
@@ -14,8 +14,8 @@ use miden_crypto::{Felt, Word, ZERO};
 use miden_objects::{account::NetworkId, vm::AdviceMap};
 use tokio::time::{Duration, sleep};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::test]
+async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
     delete_keystore_and_store(None).await;
 
     // -------------------------------------------------------------------------
@@ -24,8 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let endpoint = Endpoint::testnet();
     let mut client = instantiate_client(endpoint, None).await.unwrap();
 
-    let sync_summary = client.sync_state().await.unwrap();
-    println!("⛓  Latest block: {}", sync_summary.block_num);
+    client.sync_state().await.unwrap();
 
     // Deploy my multisig contract
     let multisig_code = fs::read_to_string(Path::new("./masm/accounts/multisig.masm")).unwrap();
@@ -62,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tx_script = create_tx_script(script_code, Some(library)).unwrap();
 
     // -------------------------------------------------------------------------
-    // STEP 4: Prepare advice map for new signer
+    // STEP 3: Prepare advice map for new signer
     // -------------------------------------------------------------------------
     let mut advice_map = AdviceMap::default();
 
@@ -84,52 +83,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // -------------------------------------------------------------------------
-    // STEP 5: Build & Submit Transaction
+    // STEP 4: Build & Submit Transaction
     // -------------------------------------------------------------------------
-    let tx_add_signer_request = TransactionRequestBuilder::new()
-        .with_custom_script(tx_script)
-        .extend_advice_map(advice_map)
-        .build()
-        .unwrap();
-
-    let tx_result = client
-        .new_transaction(multisig_contract.id(), tx_add_signer_request)
+    build_and_submit_tx(tx_script, advice_map, &mut client, multisig_contract.id())
         .await
         .unwrap();
 
-    let _ = client.submit_transaction(tx_result).await;
-
     // -------------------------------------------------------------------------
-    // STEP 6: Fetch and verify signer added
+    // STEP 5: Fetch and verify signer added
     // -------------------------------------------------------------------------
     println!("🚀 Add signer transaction submitted – waiting for finality …");
     sleep(Duration::from_secs(7)).await;
 
-    // Deleting keystore & store to show how to fetch public state
-    delete_keystore_and_store(None).await;
-
-    let endpoint = Endpoint::testnet();
-    let mut client = instantiate_client(endpoint, None).await?;
-
-    client
-        .import_account_by_id(multisig_contract.id())
-        .await
-        .unwrap();
+    client.sync_state().await.unwrap();
 
     let account_state = client
         .get_account(multisig_contract.id())
         .await?
         .expect("multisig contract not found");
 
-    let storage_threshold: Word = account_state.account().storage().get_item(0)?.into();
-    println!("🔢 Storage threshold: {:?}", storage_threshold);
-
     // loop through the original signer
     for i in 0..original_signer_pub_keys.len() {
         let storage_signer: Word = account_state
             .account()
             .storage()
-            .get_map_item(2, original_signer_pub_keys[i].into())?
+            .get_map_item(SIGNERS_SLOT as u8, original_signer_pub_keys[i].into())?
             .into();
         println!(
             "Storage Original Signer: {:?}, Weight: {:?}",
@@ -139,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_new_signer: Word = account_state
         .account()
         .storage()
-        .get_map_item(2, new_signer_public_key.into())?
+        .get_map_item(SIGNERS_SLOT as u8, new_signer_public_key.into())?
         .into();
 
     println!(
@@ -148,82 +126,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("✅ Success! The signer was added.");
 
-    // -------------------------------------------------------------------------
-    // STEP 7: Prepare the Script for change threshold
-    // -------------------------------------------------------------------------
-    let sync_summary = client.sync_state().await.unwrap();
-    println!("⛓  Latest block: {}", sync_summary.block_num);
+    Ok(())
+}
 
-    let script_code =
-        fs::read_to_string(Path::new("./masm/scripts/change_threshold.masm")).unwrap();
-
-    let account_code = fs::read_to_string(Path::new("./masm/accounts/multisig.masm")).unwrap();
-    let library_path = "external_contract::multisig_contract";
-
-    let library = create_library(account_code, library_path).unwrap();
-
-    let tx_script = create_tx_script(script_code, Some(library)).unwrap();
+#[tokio::test]
+#[should_panic]
+async fn add_signer_with_same_public_key() {
+    delete_keystore_and_store(None).await;
 
     // -------------------------------------------------------------------------
-    // STEP 8: Prepare advice map for change threshold
+    // Instantiate client
     // -------------------------------------------------------------------------
-    let mut advice_map = AdviceMap::default();
+    let endpoint = Endpoint::testnet();
+    let mut client = instantiate_client(endpoint, None).await.unwrap();
 
-    // insert new threshold into advice map at index 0
-    advice_map.insert(
-        [Felt::new(0), ZERO, ZERO, ZERO].into(),
-        [Felt::new(3), ZERO, ZERO, ZERO].into(),
+    client.sync_state().await.unwrap();
+
+    // Deploy my multisig contract
+    let multisig_code = fs::read_to_string(Path::new("./masm/accounts/multisig.masm")).unwrap();
+
+    let (multisig_contract, multisig_seed, original_signer_pub_keys, _original_signer_secret_keys) =
+        create_multisig_account(
+            &mut client,
+            &multisig_code,
+            THRESHOLD,
+            SIGNER_WEIGHTS.to_vec(),
+        )
+        .await
+        .unwrap();
+
+    client
+        .add_account(&multisig_contract, Some(multisig_seed), false)
+        .await
+        .unwrap();
+
+    println!(
+        "📄 Multisig contract ID: {}",
+        multisig_contract.id().to_bech32(NetworkId::Testnet)
     );
 
     // -------------------------------------------------------------------------
-    // STEP 9: Build & Submit Transaction
+    // STEP 2: Prepare the Script
     // -------------------------------------------------------------------------
-    let tx_change_threshold_request = TransactionRequestBuilder::new()
-        .with_custom_script(tx_script)
-        .extend_advice_map(advice_map)
-        .build()
-        .unwrap();
-
-    let tx_result = client
-        .new_transaction(multisig_contract.id(), tx_change_threshold_request)
-        .await
-        .unwrap();
-
-    let _ = client.submit_transaction(tx_result).await;
-
-    // -------------------------------------------------------------------------
-    // STEP 10: Fetch and verify threshold changed
-    // -------------------------------------------------------------------------
-    println!("🚀 Change threshold transaction submitted – waiting for finality …");
-    sleep(Duration::from_secs(7)).await;
-
-    // Deleting keystore & store to show how to fetch public state
-    delete_keystore_and_store(None).await;
-
-    let endpoint = Endpoint::testnet();
-    let mut client = instantiate_client(endpoint, None).await?;
-
-    client
-        .import_account_by_id(multisig_contract.id())
-        .await
-        .unwrap();
-
-    let account_state = client
-        .get_account(multisig_contract.id())
-        .await?
-        .expect("multisig contract not found");
-
-    let storage_threshold: Word = account_state.account().storage().get_item(0)?.into();
-    println!("🔢 Storage threshold: {:?}", storage_threshold);
-    println!("✅ Success! The threshold was changed.");
-
-    // -------------------------------------------------------------------------
-    // STEP 11: Prepare the Script for remove signer
-    // -------------------------------------------------------------------------
-    let sync_summary = client.sync_state().await.unwrap();
-    println!("⛓  Latest block: {}", sync_summary.block_num);
-
-    let script_code = fs::read_to_string(Path::new("./masm/scripts/remove_signer.masm")).unwrap();
+    let script_code = fs::read_to_string(Path::new("./masm/scripts/add_signer.masm")).unwrap();
 
     let account_code = fs::read_to_string(Path::new("./masm/accounts/multisig.masm")).unwrap();
     let library_path = "external_contract::multisig_contract";
@@ -233,61 +178,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tx_script = create_tx_script(script_code, Some(library)).unwrap();
 
     // -------------------------------------------------------------------------
-    // STEP 12: Prepare advice map for remove signer
+    // STEP 3: Prepare advice map for new signer
     // -------------------------------------------------------------------------
     let mut advice_map = AdviceMap::default();
 
-    // insert new threshold into advice map at index 0
+    // insert public key into advice map at index 0
+    advice_map.insert(
+        [Felt::new(0), ZERO, ZERO, ZERO].into(),
+        original_signer_pub_keys[0].into(),
+    );
+    advice_map.insert(
+        [Felt::new(1), ZERO, ZERO, ZERO].into(),
+        [Felt::new(1), ZERO, ZERO, ZERO].into(),
+    );
+
+    // -------------------------------------------------------------------------
+    // STEP 4: Build & Submit Transaction
+    // -------------------------------------------------------------------------
+    build_and_submit_tx(tx_script, advice_map, &mut client, multisig_contract.id())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[should_panic]
+async fn add_signer_with_invalid_weight() {
+    delete_keystore_and_store(None).await;
+
+    // -------------------------------------------------------------------------
+    // Instantiate client
+    // -------------------------------------------------------------------------
+    let endpoint = Endpoint::testnet();
+    let mut client = instantiate_client(endpoint, None).await.unwrap();
+
+    client.sync_state().await.unwrap();
+
+    // Deploy my multisig contract
+    let multisig_code = fs::read_to_string(Path::new("./masm/accounts/multisig.masm")).unwrap();
+
+    let (multisig_contract, multisig_seed, _original_signer_pub_keys, _original_signer_secret_keys) =
+        create_multisig_account(
+            &mut client,
+            &multisig_code,
+            THRESHOLD,
+            SIGNER_WEIGHTS.to_vec(),
+        )
+        .await
+        .unwrap();
+
+    client
+        .add_account(&multisig_contract, Some(multisig_seed), false)
+        .await
+        .unwrap();
+
+    println!(
+        "📄 Multisig contract ID: {}",
+        multisig_contract.id().to_bech32(NetworkId::Testnet)
+    );
+
+    // -------------------------------------------------------------------------
+    // STEP 2: Prepare the Script
+    // -------------------------------------------------------------------------
+    let script_code = fs::read_to_string(Path::new("./masm/scripts/add_signer.masm")).unwrap();
+
+    let account_code = fs::read_to_string(Path::new("./masm/accounts/multisig.masm")).unwrap();
+    let library_path = "external_contract::multisig_contract";
+
+    let library = create_library(account_code, library_path).unwrap();
+
+    let tx_script = create_tx_script(script_code, Some(library)).unwrap();
+
+    // -------------------------------------------------------------------------
+    // STEP 3: Prepare advice map for new signer
+    // -------------------------------------------------------------------------
+    // generate keypair
+    let (_, new_signer_public_key) = generate_keypair(&mut client);
+
+    let mut advice_map = AdviceMap::default();
+
+    // insert public key into advice map at index 0
     advice_map.insert(
         [Felt::new(0), ZERO, ZERO, ZERO].into(),
         new_signer_public_key.into(),
     );
+    advice_map.insert(
+        [Felt::new(1), ZERO, ZERO, ZERO].into(),
+        [Felt::new(100), ZERO, ZERO, ZERO].into(),
+    );
 
     // -------------------------------------------------------------------------
-    // STEP 13: Build & Submit Transaction
+    // STEP 4: Build & Submit Transaction
     // -------------------------------------------------------------------------
-    let tx_remove_signer_request = TransactionRequestBuilder::new()
-        .with_custom_script(tx_script)
-        .extend_advice_map(advice_map)
-        .build()
-        .unwrap();
-
-    let tx_result = client
-        .new_transaction(multisig_contract.id(), tx_remove_signer_request)
+    build_and_submit_tx(tx_script, advice_map, &mut client, multisig_contract.id())
         .await
         .unwrap();
-
-    let _ = client.submit_transaction(tx_result).await;
-
-    // -------------------------------------------------------------------------
-    // STEP 14: Fetch and verify signer removed
-    // -------------------------------------------------------------------------
-    println!("🚀 Remove signer transaction submitted – waiting for finality …");
-    sleep(Duration::from_secs(7)).await;
-
-    // Deleting keystore & store to show how to fetch public state
-    delete_keystore_and_store(None).await;
-
-    let endpoint = Endpoint::testnet();
-    let mut client = instantiate_client(endpoint, None).await?;
-
-    client
-        .import_account_by_id(multisig_contract.id())
-        .await
-        .unwrap();
-
-    let account_state = client
-        .get_account(multisig_contract.id())
-        .await?
-        .expect("multisig contract not found");
-
-    let storage_signer: Word = account_state
-        .account()
-        .storage()
-        .get_map_item(2, original_signer_pub_keys[0].into())?
-        .into();
-    println!("🔢 Storage Signer: {:?}", storage_signer);
-    println!("✅ Success! The signer was removed.");
-
-    Ok(())
 }

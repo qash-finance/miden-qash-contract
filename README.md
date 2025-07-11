@@ -1,35 +1,73 @@
-# MASM Project Template
+# MASM Weighted Multisig
 
-A minimal example for compiling, deploying, and testing MASM contracts & notes.
+A minimal example for compiling, deploying, and testing MASM contracts & notes, featuring a weighted multisig account.
 
-### Running the program on testnet:
-Deploying the counter and incrementing:
-```bash
-cargo run --release
-```
+---
 
-Incrementing an existing counter contract:
-```bash
-cargo run --release --bin increment
-```
+## Table of Contents
 
-### Running the tests:
-*Before running, ensure you have the miden-node running locally in a separate terminal window:*
+- [MASM Weighted Multisig](#masm-weighted-multisig)
+  - [Table of Contents](#table-of-contents)
+  - [Running All Tests](#running-all-tests)
+  - [Deployment](#deployment)
+  - [Signer Management](#signer-management)
+    - [Add Signer](#add-signer)
+    - [Remove Signer](#remove-signer)
+    - [Change Threshold](#change-threshold)
+  - [Other Features](#other-features)
+
+---
+
+## Running All Tests
+
 ```bash
 cargo test --release -- --nocapture --test-threads=1
 ```
 
-### Run the miden-node locally:
-1) Install & setup miden-node:
+---
+
+## Deployment
+
+Deploy the weighted multisig contract:
+
 ```bash
-./scripts/setup_node.sh
+cargo test deploy_multisig --release -- --nocapture --test-threads=1
 ```
 
-2) Run the node locally: 
+---
+
+## Signer Management
+
+### Add Signer
+
+Add a new signer:
+
 ```bash
-./scripts/start_node.sh
+cargo test add_signer_success --release -- --nocapture --test-threads=1
 ```
 
-### Miden WebClient Frontend Repo
+Add a new signer with the same public key (should fail):
 
-https://github.com/partylikeits1983/miden-counter-contract
+```bash
+cargo test add_signer_with_same_public_key --release -- --nocapture --test-threads=1
+```
+
+Add a new signer with invalid weight (should fail):
+
+```bash
+cargo test add_signer_with_invalid_weight --release -- --nocapture --test-threads=1
+```
+
+### Remove Signer
+
+<!-- Add instructions here when implemented -->
+
+### Change Threshold
+
+<!-- Add instructions here when implemented -->
+
+---
+
+## Other Features
+
+<!-- Add more sections as your project grows -->
