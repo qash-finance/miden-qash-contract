@@ -5,7 +5,7 @@ use.miden::account
 # Weighted multisig contract
 # When initializing, we need to offer signers public keys together with their weights
 # As well as the threshold for the multisig to be valid
-# 
+# Notice: You cannot have signer with 0 weight, 0 weight is meant to be non-signer
 
 # Define the storage location
 # Storage
@@ -26,6 +26,7 @@ const.ALREADY_SIGNER=1111
 #### PUBLIC FUNCTIONS ######
 ############################
 
+#! Update threshold for approval transactions
 #! Advice map input: {0: new threshold}
 #! Inputs:  []
 #! Outputs: []
@@ -40,29 +41,51 @@ export.change_threshold
 
   adv.push_mapval
   # OS => []
-  # AS => [NEW_THRESHOLD, ZERO, ZERO, ZERO]
+  # AS => [ZERO, ZERO, ZERO, NEW_THRESHOLD]
 
   adv_loadw 
+  # OS => [ZERO, ZERO, ZERO, NEW_THRESHOLD]
+
+  ############# NOTE-ASSERT START: CHECK IF NEW THRESHOLD SAME WITH OLD THRESHOLD ###############
+  swap.3
   # OS => [NEW_THRESHOLD, ZERO, ZERO, ZERO]
 
-  ############# NOTE-ASSERT START: CHECK IF NEW THRESHOLD GREATER TOTAL WEIGHT ###############
   dup.0
   # OS => [NEW_THRESHOLD, NEW_THRESHOLD, ZERO, ZERO, ZERO]
 
-  push.TOTAL_WEIGHT_INDEX
-  # OS => [TOTAL_WEIGHT_INDEX, NEW_THRESHOLD, NEW_THRESHOLD, ZERO, ZERO, ZERO]
+  push.THRESHOLD_INDEX
+  # OS => [THRESHOLD_INDEX, NEW_THRESHOLD, NEW_THRESHOLD, ZERO, ZERO, ZERO]
 
-  exec.account::get_item
-  # OS => [ZERO, ZERO, ZERO, TOTAL_WEIGHT, NEW_THRESHOLD, NEW_THRESHOLD, ZERO, ZERO, ZERO]
-  debug.stack
+  exec.account::get_item drop drop drop
+  # OS => [OLD_THRESHOLD, NEW_THRESHOLD, NEW_THRESHOLD, ZERO, ZERO, ZERO]
 
-  ############# NOTE-ASSERT END: CHECK IF NEW THRESHOLD GREATER TOTAL WEIGHT ###############
-
-  ############# NOTE-ASSERT START: CHECK IF NEW THRESHOLD SAME WITH OLD THRESHOLD ###############
+  eq assertz
+  # OS => [NEW_THRESHOLD, ZERO, ZERO, ZERO]
 
   ############# NOTE-ASSERT END: CHECK IF NEW THRESHOLD SAME WITH OLD THRESHOLD ###############
 
+  ############# NOTE-ASSERT START: CHECK IF NEW THRESHOLD GREATER TOTAL WEIGHT ###############
+  push.TOTAL_WEIGHT_INDEX
+  # OS => [TOTAL_WEIGHT_INDEX, NEW_THRESHOLD]
+
+  exec.account::get_item drop drop drop
+  # OS => [TOTAL_WEIGHT, NEW_THRESHOLD]
+
+  swap.1
+  # OS => [NEW_THRESHOLD, TOTAL_WEIGHT]
+
+  dup.0 swap.2
+  # OS => [TOTAL_WEIGHT, NEW_THRESHOLD, NEW_THRESHOLD]
+
+  # we need TOTAL_WEIGHT >= NEW_THRESHOLD, or NEW_THRESHOLD <= TOTAL_WEIGHT
+  lte push.1 assert_eq
+  # OS => [NEW_THRESHOLD]
+  ############# NOTE-ASSERT END: CHECK IF NEW THRESHOLD GREATER TOTAL WEIGHT ###############
+
   ############# NOTE-STORAGE UPDATE START: UPDATE THRESHOLD ###############
+  push.0.0.0
+  # OS => [ZERO, ZERO, ZERO, NEW_THRESHOLD]
+
   push.THRESHOLD_INDEX
   # OS => [THRESHOLD_INDEX, NEW_THRESHOLD, ZERO, ZERO, ZERO]
 
@@ -75,7 +98,11 @@ export.change_threshold
  
 end
 
-
+#! Add new signer to weighted multisig
+#! If success:
+#! - Update the global weight
+#! - Update public key map with new_pub_key => weight
+#! 
 #! Advice map input: {0: new signer pubkey, 1: new signer weight}
 #! Inputs:  []
 #! Outputs: []
@@ -195,6 +222,9 @@ export.add_signer
 end
 
 #! Remove an existing signer from the signer map
+#! If success:
+#! - Update the global weight
+#! - Reset signer weight to 0
 #! 
 #! Advice map input: {0: signer pubkey to remove}
 #! Inputs:  []
@@ -216,10 +246,63 @@ export.remove_signer
   # OS => [SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
   # AS => []
 
+  ############# NOTE-ASSERT START: CHECK IF SIGNER EXIST ###############
+  dupw
+  # OS => [SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
+
+  push.PUBKEY_MAP_INDEX
+  # OS => [PUBKEY_MAP_INDEX, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
+  
+  exec.account::get_map_item drop drop drop dup
+  # OS => [WEIGHT_OF_SIGNER_TO_REMOVE, WEIGHT_OF_SIGNER_TO_REMOVE, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
+
+  # the weight should > 0
+  push.0 eq # if not equal, push 0 to stack, which mean signer existed
+  # OS => [CONDITION, WEIGHT_OF_SIGNER_TO_REMOVE, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
+
+  assertz
+  # OS => [WEIGHT_OF_SIGNER_TO_REMOVE, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
+
+  ############# NOTE-ASSERT START: CHECK IF SIGNER EXIST ###############
+
+  # until here, the signer is exist
+
+  ############# NOTE-ASSERT START: CHECK IF SIGNER TO REMOVE WILL CAUSE THRESHOLD UNREACHABLE ###############
+  
+  # VARIANT: TOTAL_WEIGHT - WEIGHT_OF_SIGNER_TO_REMOVE >= THRESHOLD
+  dup push.TOTAL_WEIGHT_INDEX
+  # OS => [TOTAL_WEIGHT_INDEX, WEIGHT_OF_SIGNER_TO_REMOVE, WEIGHT_OF_SIGNER_TO_REMOVE, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
+
+  exec.account::get_item drop drop drop
+  # OS => [TOTAL_WEIGHT, WEIGHT_OF_SIGNER_TO_REMOVE, WEIGHT_OF_SIGNER_TO_REMOVE, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
+
+  swap.1 sub
+  # OS => [REMAINING_WEIGHT, WEIGHT_OF_SIGNER_TO_REMOVE, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
+
+  push.THRESHOLD_INDEX exec.account::get_item drop drop drop
+  # OS => [THRESHOLD, REMAINING_WEIGHT, WEIGHT_OF_SIGNER_TO_REMOVE, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
+  
+  gte # REMAINING_WEIGHT >= THRESHOLD, 1 if true
+  # OS => [CONDITION, WEIGHT_OF_SIGNER_TO_REMOVE, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
+
+  push.1 assert_eq
+  # OS => [WEIGHT_OF_SIGNER_TO_REMOVE, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
+
+  ############# NOTE-ASSERT END: CHECK IF SIGNER TO REMOVE WILL CAUSE THRESHOLD UNREACHABLE ###############
+
+  ############# NOTE-STORAGE UPDATE START: RESET SIGNER WEIGHT TO ZERO ###############
+  debug.stack
   push.PUBKEY_MAP_INDEX
   # OS => [PUBKEY_MAP_INDEX, SIGNER_TO_REMOVE_PUBKEY_3, SIGNER_TO_REMOVE_PUBKEY_2, SIGNER_TO_REMOVE_PUBKEY_1, SIGNER_TO_REMOVE_PUBKEY_0]
-  
+
+
+
   exec.account::set_map_item
+  ############# NOTE-STORAGE UPDATE END: RESET SIGNER WEIGHT TO ZERO ###############
+
+  ############# NOTE-STORAGE UPDATE START: UPDATE GLOBAL WEIGHT ###############
+  ############# NOTE-STORAGE UPDATE END: UPDATE GLOBAL WEIGHT ###############
+
 
   drop drop drop drop   
 
@@ -227,7 +310,6 @@ export.remove_signer
 
   exec.sys::truncate_stack
 end
-
 
 export.receive_asset
   call.wallet::receive_asset

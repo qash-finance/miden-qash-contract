@@ -1,11 +1,10 @@
 use masm_project_template::{
     common::{
-        build_and_submit_tx, generate_keypair, initialize_client_and_multisig, prepare_felt_vec,
-        prepare_script,
+        build_and_submit_tx, initialize_client_and_multisig, prepare_felt_vec, prepare_script,
     },
     constants::{
-        ADD_SIGNER_SCRIPT_PATH, INVALID_WEIGHT, LIBRARY_PATH, MULTISIG_CODE_PATH,
-        NEW_SIGNER_PUBKEY_KEY_SLOT, NEW_SIGNER_WEIGHT_KEY_SLOT, SIGNERS_SLOT, SYNC_STATE_WAIT_TIME,
+        CHANGE_THRESHOLD_SCRIPT_PATH, LIBRARY_PATH, MULTISIG_CODE_PATH, NEW_THRESHOLD_AS_KEY_SLOT,
+        SYNC_STATE_WAIT_TIME, THRESHOLD_SLOT,
     },
 };
 use miden_client_tools::delete_keystore_and_store;
@@ -14,7 +13,7 @@ use miden_objects::{account::NetworkId, vm::AdviceMap};
 use tokio::time::{Duration, sleep};
 
 #[tokio::test]
-async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
+async fn change_threshold_success() -> Result<(), Box<dyn std::error::Error>> {
     delete_keystore_and_store(None).await;
 
     // -------------------------------------------------------------------------
@@ -24,7 +23,7 @@ async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
         mut client,
         multisig_contract,
         _multisig_seed,
-        original_signer_pub_keys,
+        _original_signer_pub_keys,
         _original_signer_secret_keys,
     ) = initialize_client_and_multisig().await?;
 
@@ -34,43 +33,37 @@ async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // -------------------------------------------------------------------------
-    // STEP 2: Prepare the Script
+    // STEP 1: Prepare the Script for change threshold
     // -------------------------------------------------------------------------
-    let tx_script =
-        prepare_script(ADD_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
+    let tx_script = prepare_script(
+        CHANGE_THRESHOLD_SCRIPT_PATH,
+        MULTISIG_CODE_PATH,
+        LIBRARY_PATH,
+    )
+    .unwrap();
 
     // -------------------------------------------------------------------------
-    // STEP 3: Prepare advice map for new signer
+    // STEP 2: Prepare advice map for change threshold
     // -------------------------------------------------------------------------
     let mut advice_map = AdviceMap::default();
 
-    // generate keypair
-    let (_, new_signer_public_key) = generate_keypair(&mut client);
-
-    println!("new signer public key: {:?}", new_signer_public_key);
-
-    // insert public key into advice map at index 0
+    // insert new threshold into advice map at index 0
     advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
-        new_signer_public_key.into(),
-    );
-    // insert new signer weight into advice map at index 1
-    advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
-        prepare_felt_vec(1).into(),
+        prepare_felt_vec(NEW_THRESHOLD_AS_KEY_SLOT as u64).into(),
+        prepare_felt_vec(4).into(),
     );
 
     // -------------------------------------------------------------------------
-    // STEP 4: Build & Submit Transaction
+    // STEP 3: Build & Submit Transaction
     // -------------------------------------------------------------------------
     build_and_submit_tx(tx_script, advice_map, &mut client, multisig_contract.id())
         .await
         .unwrap();
 
     // -------------------------------------------------------------------------
-    // STEP 5: Fetch and verify signer added
+    // STEP 4: Fetch and verify threshold changed
     // -------------------------------------------------------------------------
-    println!("🚀 Add signer transaction submitted – waiting for finality …");
+    println!("🚀 Change threshold transaction submitted – waiting for finality …");
     sleep(Duration::from_secs(SYNC_STATE_WAIT_TIME)).await;
 
     client.sync_state().await.unwrap();
@@ -80,36 +73,20 @@ async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .expect("multisig contract not found");
 
-    // loop through the original signer
-    for i in 0..original_signer_pub_keys.len() {
-        let storage_signer: Word = account_state
-            .account()
-            .storage()
-            .get_map_item(SIGNERS_SLOT as u8, original_signer_pub_keys[i].into())?
-            .into();
-        println!(
-            "Storage Original Signer: {:?}, Weight: {:?}",
-            original_signer_pub_keys[i], storage_signer
-        );
-    }
-    let storage_new_signer: Word = account_state
+    let storage_threshold: Word = account_state
         .account()
         .storage()
-        .get_map_item(SIGNERS_SLOT as u8, new_signer_public_key.into())?
+        .get_item(THRESHOLD_SLOT as u8)?
         .into();
-
-    println!(
-        "🔢 Storage New Signer Public Key: {:?}, Weight: {:?}",
-        new_signer_public_key, storage_new_signer
-    );
-    println!("✅ Success! The signer was added.");
+    println!("🔢 Storage threshold: {:?}", storage_threshold);
+    println!("✅ Success! The threshold was changed.");
 
     Ok(())
 }
 
 #[tokio::test]
 #[should_panic]
-async fn add_signer_with_same_public_key() {
+async fn change_threshold_with_same_threshold() {
     delete_keystore_and_store(None).await;
 
     // -------------------------------------------------------------------------
@@ -119,33 +96,38 @@ async fn add_signer_with_same_public_key() {
         mut client,
         multisig_contract,
         _multisig_seed,
-        original_signer_pub_keys,
+        _original_signer_pub_keys,
         _original_signer_secret_keys,
     ) = initialize_client_and_multisig().await.unwrap();
 
-    // -------------------------------------------------------------------------
-    // STEP 2: Prepare the Script
-    // -------------------------------------------------------------------------
-    let tx_script =
-        prepare_script(ADD_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
+    println!(
+        "📄 Multisig contract ID: {}",
+        multisig_contract.id().to_bech32(NetworkId::Testnet)
+    );
 
     // -------------------------------------------------------------------------
-    // STEP 3: Prepare advice map for new signer
+    // STEP 1: Prepare the Script for change threshold
+    // -------------------------------------------------------------------------
+    let tx_script = prepare_script(
+        CHANGE_THRESHOLD_SCRIPT_PATH,
+        MULTISIG_CODE_PATH,
+        LIBRARY_PATH,
+    )
+    .unwrap();
+
+    // -------------------------------------------------------------------------
+    // STEP 2: Prepare advice map for change threshold
     // -------------------------------------------------------------------------
     let mut advice_map = AdviceMap::default();
 
-    // insert public key into advice map at index 0
+    // insert new threshold into advice map at index 0
     advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
-        original_signer_pub_keys[0].into(),
-    );
-    advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
-        prepare_felt_vec(1).into(),
+        prepare_felt_vec(NEW_THRESHOLD_AS_KEY_SLOT as u64).into(),
+        prepare_felt_vec(3).into(),
     );
 
     // -------------------------------------------------------------------------
-    // STEP 4: Build & Submit Transaction
+    // STEP 3: Build & Submit Transaction
     // -------------------------------------------------------------------------
     build_and_submit_tx(tx_script, advice_map, &mut client, multisig_contract.id())
         .await
@@ -154,7 +136,7 @@ async fn add_signer_with_same_public_key() {
 
 #[tokio::test]
 #[should_panic]
-async fn add_signer_with_invalid_weight() {
+async fn change_threshold_with_invalid_threshold() {
     delete_keystore_and_store(None).await;
 
     // -------------------------------------------------------------------------
@@ -169,31 +151,28 @@ async fn add_signer_with_invalid_weight() {
     ) = initialize_client_and_multisig().await.unwrap();
 
     // -------------------------------------------------------------------------
-    // STEP 2: Prepare the Script
+    // STEP 1: Prepare the Script for change threshold
     // -------------------------------------------------------------------------
-    let tx_script =
-        prepare_script(ADD_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
+    let tx_script = prepare_script(
+        CHANGE_THRESHOLD_SCRIPT_PATH,
+        MULTISIG_CODE_PATH,
+        LIBRARY_PATH,
+    )
+    .unwrap();
 
     // -------------------------------------------------------------------------
-    // STEP 3: Prepare advice map for new signer
+    // STEP 2: Prepare advice map for change threshold
     // -------------------------------------------------------------------------
-    // generate keypair
-    let (_, new_signer_public_key) = generate_keypair(&mut client);
-
     let mut advice_map = AdviceMap::default();
 
-    // insert public key into advice map at index 0
+    // insert new threshold into advice map at index 0
     advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
-        new_signer_public_key.into(),
-    );
-    advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
-        prepare_felt_vec(INVALID_WEIGHT as u64).into(),
+        prepare_felt_vec(NEW_THRESHOLD_AS_KEY_SLOT as u64).into(),
+        prepare_felt_vec(100).into(),
     );
 
     // -------------------------------------------------------------------------
-    // STEP 4: Build & Submit Transaction
+    // STEP 3: Build & Submit Transaction
     // -------------------------------------------------------------------------
     build_and_submit_tx(tx_script, advice_map, &mut client, multisig_contract.id())
         .await

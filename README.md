@@ -14,7 +14,6 @@ A minimal example for compiling, deploying, and testing MASM contracts & notes, 
     - [Add Signer](#add-signer)
     - [Remove Signer](#remove-signer)
     - [Change Threshold](#change-threshold)
-  - [Other Features](#other-features)
 
 ---
 
@@ -60,14 +59,42 @@ cargo test add_signer_with_invalid_weight --release -- --nocapture --test-thread
 
 ### Remove Signer
 
-<!-- Add instructions here when implemented -->
+Remove signer:
+
+```bash
+cargo test remove_signer_success --release -- --nocapture --test-threads=1
+```
+
+Remove non signer (should fail):
+
+```bash
+cargo test remove_signer_with_non_signer --release -- --nocapture --test-threads=1
+```
+
+Remove signer causing threshold unreachable (should fail):
+
+```bash
+cargo test remove_signer_causing_threshold_unreachable --release -- --nocapture --test-threads=1
+```
 
 ### Change Threshold
 
-<!-- Add instructions here when implemented -->
+Change threshold:
+
+```bash
+cargo test change_threshold_success --release -- --nocapture --test-threads=1
+```
+
+Change threshold with same threshold (should fail):
+
+```bash
+cargo test change_threshold_with_same_threshold --release -- --nocapture --test-threads=1
+```
+
+Change threshold with invalid threshold (should fail):
+
+```bash
+cargo test change_threshold_with_invalid_threshold --release -- --nocapture --test-threads=1
+```
 
 ---
-
-## Other Features
-
-<!-- Add more sections as your project grows -->

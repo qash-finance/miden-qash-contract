@@ -4,8 +4,9 @@ use masm_project_template::{
         prepare_script,
     },
     constants::{
-        ADD_SIGNER_SCRIPT_PATH, INVALID_WEIGHT, LIBRARY_PATH, MULTISIG_CODE_PATH,
-        NEW_SIGNER_PUBKEY_KEY_SLOT, NEW_SIGNER_WEIGHT_KEY_SLOT, SIGNERS_SLOT, SYNC_STATE_WAIT_TIME,
+        LIBRARY_PATH, MULTISIG_CODE_PATH, REMOVE_SIGNER_SCRIPT_PATH,
+        SIGNER_TO_REMOVE_CANT_REACH_THRESHOLD_INDEX, SIGNER_TO_REMOVE_INDEX,
+        SIGNER_TO_REMOVE_KEY_SLOT, SIGNERS_SLOT, SYNC_STATE_WAIT_TIME,
     },
 };
 use miden_client_tools::delete_keystore_and_store;
@@ -14,11 +15,11 @@ use miden_objects::{account::NetworkId, vm::AdviceMap};
 use tokio::time::{Duration, sleep};
 
 #[tokio::test]
-async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
+async fn remove_signer_success() -> Result<(), Box<dyn std::error::Error>> {
     delete_keystore_and_store(None).await;
 
     // -------------------------------------------------------------------------
-    // Instantiate client
+    // 1. Instantiate client
     // -------------------------------------------------------------------------
     let (
         mut client,
@@ -28,36 +29,21 @@ async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
         _original_signer_secret_keys,
     ) = initialize_client_and_multisig().await?;
 
-    println!(
-        "📄 Multisig contract ID: {}",
-        multisig_contract.id().to_bech32(NetworkId::Testnet)
-    );
-
     // -------------------------------------------------------------------------
     // STEP 2: Prepare the Script
     // -------------------------------------------------------------------------
     let tx_script =
-        prepare_script(ADD_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
+        prepare_script(REMOVE_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
 
     // -------------------------------------------------------------------------
     // STEP 3: Prepare advice map for new signer
     // -------------------------------------------------------------------------
     let mut advice_map = AdviceMap::default();
 
-    // generate keypair
-    let (_, new_signer_public_key) = generate_keypair(&mut client);
-
-    println!("new signer public key: {:?}", new_signer_public_key);
-
-    // insert public key into advice map at index 0
+    // insert new threshold into advice map at index 0
     advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
-        new_signer_public_key.into(),
-    );
-    // insert new signer weight into advice map at index 1
-    advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
-        prepare_felt_vec(1).into(),
+        prepare_felt_vec(SIGNER_TO_REMOVE_KEY_SLOT as u64).into(),
+        original_signer_pub_keys[SIGNER_TO_REMOVE_INDEX].into(),
     );
 
     // -------------------------------------------------------------------------
@@ -70,7 +56,7 @@ async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
     // -------------------------------------------------------------------------
     // STEP 5: Fetch and verify signer added
     // -------------------------------------------------------------------------
-    println!("🚀 Add signer transaction submitted – waiting for finality …");
+    println!("🚀 Remove signer transaction submitted – waiting for finality …");
     sleep(Duration::from_secs(SYNC_STATE_WAIT_TIME)).await;
 
     client.sync_state().await.unwrap();
@@ -80,40 +66,27 @@ async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .expect("multisig contract not found");
 
-    // loop through the original signer
-    for i in 0..original_signer_pub_keys.len() {
-        let storage_signer: Word = account_state
-            .account()
-            .storage()
-            .get_map_item(SIGNERS_SLOT as u8, original_signer_pub_keys[i].into())?
-            .into();
-        println!(
-            "Storage Original Signer: {:?}, Weight: {:?}",
-            original_signer_pub_keys[i], storage_signer
-        );
-    }
-    let storage_new_signer: Word = account_state
+    let storage_signer: Word = account_state
         .account()
         .storage()
-        .get_map_item(SIGNERS_SLOT as u8, new_signer_public_key.into())?
+        .get_map_item(
+            SIGNERS_SLOT as u8,
+            original_signer_pub_keys[SIGNER_TO_REMOVE_INDEX].into(),
+        )?
         .into();
-
-    println!(
-        "🔢 Storage New Signer Public Key: {:?}, Weight: {:?}",
-        new_signer_public_key, storage_new_signer
-    );
-    println!("✅ Success! The signer was added.");
+    println!("🔢 Storage Signer: {:?}", storage_signer);
+    println!("✅ Success! The signer was removed.");
 
     Ok(())
 }
 
 #[tokio::test]
 #[should_panic]
-async fn add_signer_with_same_public_key() {
+async fn remove_signer_with_non_signer() {
     delete_keystore_and_store(None).await;
 
     // -------------------------------------------------------------------------
-    // Instantiate client
+    // 1. Instantiate client
     // -------------------------------------------------------------------------
     let (
         mut client,
@@ -127,21 +100,20 @@ async fn add_signer_with_same_public_key() {
     // STEP 2: Prepare the Script
     // -------------------------------------------------------------------------
     let tx_script =
-        prepare_script(ADD_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
+        prepare_script(REMOVE_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
 
     // -------------------------------------------------------------------------
     // STEP 3: Prepare advice map for new signer
     // -------------------------------------------------------------------------
     let mut advice_map = AdviceMap::default();
 
-    // insert public key into advice map at index 0
+    // generate random key pair which is not signer
+    let (_, random_pub_key) = generate_keypair(&mut client);
+
+    // insert new threshold into advice map at index 0
     advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
-        original_signer_pub_keys[0].into(),
-    );
-    advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
-        prepare_felt_vec(1).into(),
+        prepare_felt_vec(SIGNER_TO_REMOVE_KEY_SLOT as u64).into(),
+        random_pub_key.into(),
     );
 
     // -------------------------------------------------------------------------
@@ -154,17 +126,17 @@ async fn add_signer_with_same_public_key() {
 
 #[tokio::test]
 #[should_panic]
-async fn add_signer_with_invalid_weight() {
+async fn remove_signer_causing_threshold_unreachable() {
     delete_keystore_and_store(None).await;
 
     // -------------------------------------------------------------------------
-    // Instantiate client
+    // 1. Instantiate client
     // -------------------------------------------------------------------------
     let (
         mut client,
         multisig_contract,
         _multisig_seed,
-        _original_signer_pub_keys,
+        original_signer_pub_keys,
         _original_signer_secret_keys,
     ) = initialize_client_and_multisig().await.unwrap();
 
@@ -172,24 +144,17 @@ async fn add_signer_with_invalid_weight() {
     // STEP 2: Prepare the Script
     // -------------------------------------------------------------------------
     let tx_script =
-        prepare_script(ADD_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
+        prepare_script(REMOVE_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
 
     // -------------------------------------------------------------------------
     // STEP 3: Prepare advice map for new signer
     // -------------------------------------------------------------------------
-    // generate keypair
-    let (_, new_signer_public_key) = generate_keypair(&mut client);
-
     let mut advice_map = AdviceMap::default();
 
-    // insert public key into advice map at index 0
+    // insert new threshold into advice map at index 0
     advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
-        new_signer_public_key.into(),
-    );
-    advice_map.insert(
-        prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
-        prepare_felt_vec(INVALID_WEIGHT as u64).into(),
+        prepare_felt_vec(SIGNER_TO_REMOVE_KEY_SLOT as u64).into(),
+        original_signer_pub_keys[SIGNER_TO_REMOVE_CANT_REACH_THRESHOLD_INDEX].into(),
     );
 
     // -------------------------------------------------------------------------

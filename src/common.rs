@@ -25,12 +25,16 @@ use miden_lib::{
     account::{auth::RpoFalcon512, wallets::BasicWallet},
     transaction::TransactionKernel,
 };
-use miden_objects::{account::AccountComponent, vm::AdviceMap};
+use miden_objects::{
+    account::{AccountComponent, NetworkId},
+    vm::AdviceMap,
+};
 use rand::{RngCore, rngs::StdRng};
 use serde::de::value::Error;
 use std::sync::Arc;
+use std::{fs, path::Path};
 
-use crate::constants::{THRESHOLD, TOTAL_WEIGHT};
+use crate::constants::{MULTISIG_CODE_PATH, NETWORK_ID, SIGNER_WEIGHTS, THRESHOLD, TOTAL_WEIGHT};
 
 // Clears keystore & default sqlite file
 pub async fn delete_keystore_and_store() {
@@ -288,4 +292,63 @@ pub async fn build_and_submit_tx(
 
 pub fn prepare_felt_vec(element: u64) -> [Felt; 4] {
     [Felt::new(element), ZERO, ZERO, ZERO]
+}
+
+pub fn prepare_script(
+    script_path: &str,
+    account_code_path: &str,
+    library_path: &str,
+) -> Result<TransactionScript, Error> {
+    let script_code = fs::read_to_string(Path::new(script_path)).unwrap();
+
+    let account_code = fs::read_to_string(Path::new(account_code_path)).unwrap();
+
+    let library = create_library(account_code, library_path).unwrap();
+
+    let tx_script = create_tx_script(script_code, Some(library)).unwrap();
+
+    Ok(tx_script)
+}
+
+pub async fn initialize_client_and_multisig()
+-> Result<(Client, Account, Word, Vec<Word>, Vec<SecretKey>), Box<dyn std::error::Error>> {
+    let endpoint = if NETWORK_ID == NetworkId::Testnet {
+        Endpoint::testnet()
+    } else {
+        Endpoint::devnet()
+    };
+
+    let mut client = instantiate_client(endpoint).await.unwrap();
+
+    client.sync_state().await.unwrap();
+
+    // Deploy my multisig contract
+    let multisig_code = fs::read_to_string(Path::new(MULTISIG_CODE_PATH)).unwrap();
+
+    let (multisig_contract, multisig_seed, original_signer_pub_keys, original_signer_secret_keys) =
+        create_multisig_account(
+            &mut client,
+            &multisig_code,
+            THRESHOLD,
+            SIGNER_WEIGHTS.to_vec(),
+        )
+        .await?;
+
+    client
+        .add_account(&multisig_contract, Some(multisig_seed), false)
+        .await
+        .unwrap();
+
+    println!(
+        "📄 Multisig contract ID: {}",
+        multisig_contract.id().to_bech32(NETWORK_ID)
+    );
+
+    Ok((
+        client,
+        multisig_contract,
+        multisig_seed,
+        original_signer_pub_keys,
+        original_signer_secret_keys,
+    ))
 }

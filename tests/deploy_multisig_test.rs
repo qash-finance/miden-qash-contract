@@ -36,10 +36,5 @@ async fn deploy_multisig() -> Result<(), ClientError> {
         .await
         .unwrap();
 
-    println!(
-        "📄 Multisig contract ID: {}",
-        multisig_contract.id().to_bech32(NetworkId::Testnet)
-    );
-
     Ok(())
 }
