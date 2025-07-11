@@ -19,8 +19,8 @@ use miden_client::{
     rpc::{Endpoint, TonicRpcClient},
     transaction::{OutputNote, TransactionRequestBuilder, TransactionScript},
 };
-use miden_crypto::rand::FeltRng;
 use miden_crypto::{Felt, Word};
+use miden_crypto::{ZERO, rand::FeltRng};
 use miden_lib::{
     account::{auth::RpoFalcon512, wallets::BasicWallet},
     transaction::TransactionKernel,
@@ -284,4 +284,8 @@ pub async fn build_and_submit_tx(
 
     let _ = client.submit_transaction(tx_result).await?;
     Ok(())
+}
+
+pub fn prepare_felt_vec(element: u64) -> [Felt; 4] {
+    [Felt::new(element), ZERO, ZERO, ZERO]
 }

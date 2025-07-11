@@ -1,16 +1,19 @@
 use std::{fs, path::Path};
 
 use masm_project_template::{
-    common::{build_and_submit_tx, create_multisig_account, generate_keypair},
-    constants::{SIGNER_WEIGHTS, SIGNERS_SLOT, THRESHOLD},
+    common::{build_and_submit_tx, create_multisig_account, generate_keypair, prepare_felt_vec},
+    constants::{
+        INVALID_WEIGHT, NEW_SIGNER_PUBKEY_KEY_SLOT, NEW_SIGNER_WEIGHT_KEY_SLOT, SIGNER_WEIGHTS,
+        SIGNERS_SLOT, THRESHOLD,
+    },
 };
 
 use miden_client_tools::{
     create_library, create_tx_script, delete_keystore_and_store, instantiate_client,
 };
 
-use miden_client::{rpc::Endpoint, transaction::TransactionRequestBuilder};
-use miden_crypto::{Felt, Word, ZERO};
+use miden_client::rpc::Endpoint;
+use miden_crypto::Word;
 use miden_objects::{account::NetworkId, vm::AdviceMap};
 use tokio::time::{Duration, sleep};
 
@@ -72,14 +75,13 @@ async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
 
     // insert public key into advice map at index 0
     advice_map.insert(
-        [Felt::new(0), ZERO, ZERO, ZERO].into(),
-        // new_signer_public_key.into(),
+        prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
         new_signer_public_key.into(),
     );
     // insert new signer weight into advice map at index 1
     advice_map.insert(
-        [Felt::new(1), ZERO, ZERO, ZERO].into(),
-        [Felt::new(1), ZERO, ZERO, ZERO].into(),
+        prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
+        prepare_felt_vec(1).into(),
     );
 
     // -------------------------------------------------------------------------
@@ -184,12 +186,12 @@ async fn add_signer_with_same_public_key() {
 
     // insert public key into advice map at index 0
     advice_map.insert(
-        [Felt::new(0), ZERO, ZERO, ZERO].into(),
+        prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
         original_signer_pub_keys[0].into(),
     );
     advice_map.insert(
-        [Felt::new(1), ZERO, ZERO, ZERO].into(),
-        [Felt::new(1), ZERO, ZERO, ZERO].into(),
+        prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
+        prepare_felt_vec(1).into(),
     );
 
     // -------------------------------------------------------------------------
@@ -258,12 +260,12 @@ async fn add_signer_with_invalid_weight() {
 
     // insert public key into advice map at index 0
     advice_map.insert(
-        [Felt::new(0), ZERO, ZERO, ZERO].into(),
+        prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
         new_signer_public_key.into(),
     );
     advice_map.insert(
-        [Felt::new(1), ZERO, ZERO, ZERO].into(),
-        [Felt::new(100), ZERO, ZERO, ZERO].into(),
+        prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
+        prepare_felt_vec(INVALID_WEIGHT as u64).into(),
     );
 
     // -------------------------------------------------------------------------
