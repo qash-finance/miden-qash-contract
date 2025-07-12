@@ -1,0 +1,6 @@
+use.external_contract::spending_limit_contract
+
+# Advice map => {0: signer pubkey to remove}
+begin
+    call.spending_limit_contract::update_spending
+end

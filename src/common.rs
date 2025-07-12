@@ -289,3 +289,38 @@ pub async fn build_and_submit_tx(
 pub fn prepare_felt_vec(element: u64) -> [Felt; 4] {
     [Felt::new(element), ZERO, ZERO, ZERO]
 }
+
+pub async fn create_public_immutable_contract(
+    client: &mut Client,
+    account_code: &String,
+) -> Result<(Account, Word), ClientError> {
+    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
+
+    let counter_component = AccountComponent::compile(
+        account_code.clone(),
+        assembler.clone(),
+        vec![StorageSlot::Value([
+            Felt::new(0),
+            Felt::new(0),
+            Felt::new(0),
+            Felt::new(0),
+        ])],
+    )
+    .unwrap()
+    .with_supports_all_types();
+
+    let anchor_block = client.get_latest_epoch_block().await.unwrap();
+
+    let mut init_seed = [0_u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+
+    let (counter_contract, counter_seed) = AccountBuilder::new(init_seed)
+        .anchor((&anchor_block).try_into().unwrap())
+        .account_type(AccountType::RegularAccountImmutableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(counter_component.clone())
+        .build()
+        .unwrap();
+
+    Ok((counter_contract, counter_seed))
+}

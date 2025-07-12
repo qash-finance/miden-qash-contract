@@ -1,0 +1,6 @@
+use.external_contract::spending_limit_contract
+
+begin
+    push.1000 # Set a spending limit of 1000
+    call.spending_limit_contract::set_spending_limit
+end

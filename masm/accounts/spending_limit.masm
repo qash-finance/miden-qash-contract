@@ -1,0 +1,282 @@
+use.miden::account
+use.miden::tx
+
+# SPENDING LIMIT CONTRACT
+# =================================================================================================
+# This is a spending limit smart contract component that tracks spending over time periods.
+#
+# It allows accounts to set spending limits and automatically tracks current spending,
+# resetting the counter when the time period expires.
+#
+# Storage layout:
+# - Slot 0: Spending limit (u64)
+# - Slot 1: Current spending amount (u64)  
+# - Slot 2: Last reset timestamp (u32)
+# - Slot 3: Time period in seconds (u32)
+
+# CONSTANTS
+# =================================================================================================
+
+# Storage slot indices
+const.SPENDING_LIMIT_SLOT=0
+const.CURRENT_SPENDING_SLOT=1
+const.LAST_RESET_TIMESTAMP_SLOT=2
+const.TIME_PERIOD_SLOT=3
+
+# ERRORS
+# =================================================================================================
+
+const.ERR_SPENDING_LIMIT_EXCEEDED="spending amount would exceed the limit"
+const.ERR_SPENDING_LIMIT_INVALID_AMOUNT="spending amount must be greater than zero"
+const.ERR_SPENDING_LIMIT_INVALID_LIMIT="spending limit must be greater than zero"
+const.ERR_SPENDING_LIMIT_INVALID_PERIOD="time period must be greater than zero"
+
+# PROCEDURES
+# =================================================================================================
+
+#! Checks if a spending amount is within the current spending limit.
+#! If the time period has elapsed, resets the spending counter.
+#!
+#! Inputs:  [amount, pad(15)]
+#! Outputs: [pad(16)]
+#!
+#! Where:
+#! - amount is the spending amount to check (u64 as Felt)
+#!
+#! Panics if:
+#! - the amount is zero
+#! - the spending would exceed the daily limit
+#!
+#! Invocation: call
+export.check_spending_limit
+    # Validate amount is positive
+    dup neq.0 assert.err=ERR_SPENDING_LIMIT_INVALID_AMOUNT
+    # => [amount, pad(15)]
+
+    # Get current timestamp
+    exec.tx::get_block_timestamp
+    # => [current_timestamp, amount, pad(15)]
+
+    # Check if we need to reset spending counter
+    exec.maybe_reset_spending_counter
+    # => [amount, pad(15)]
+
+    # Get current spending and spending limit
+    push.CURRENT_SPENDING_SLOT exec.account::get_item drop drop drop
+    # => [current_spending, amount, pad(15)]
+    
+    push.SPENDING_LIMIT_SLOT exec.account::get_item drop drop drop
+    # => [spending_limit, current_spending, amount, pad(15)]
+
+    # Calculate new spending total
+    dup.2 add
+    # => [new_spending_total, spending_limit, current_spending, amount, pad(15)]
+
+    # Check if new total exceeds limit: new_spending_total <= spending_limit
+    dup.1 u32lte assert.err=ERR_SPENDING_LIMIT_EXCEEDED
+    # => [new_spending_total, spending_limit, current_spending, amount, pad(15)]
+
+    # Clean up stack to pad(16)
+    dropw dropw dropw dropw
+    padw padw padw padw
+    # => [pad(16)]
+end
+
+#! Updates the current spending amount after a successful transaction.
+#! Should be called after check_spending_limit has validated the amount.
+#!
+#! Inputs:  [amount, pad(15)]
+#! Outputs: [pad(16)]
+#!
+#! Where:
+#! - amount is the spending amount to add to current spending
+#!
+#! Invocation: call
+export.update_spending
+    # STACK: [amount, pad(15)]
+    # Get current spending
+    push.CURRENT_SPENDING_SLOT exec.account::get_item drop drop drop
+    # STACK: [current_spending, amount, pad(15)]
+
+    # Add new amount to current spending
+    add
+    # STACK: [new_spending_total, pad(15)]
+
+    # Store new spending total
+    push.CURRENT_SPENDING_SLOT
+    # STACK: [1, new_spending_total, pad(15)]
+    
+    # create word [0,0,0,new_spending_total]
+    push.0.0.0
+    dup.1
+    movdn.4 movdn.4 movdn.4 movdn.4
+    # STACK: [1, 0,0,0, new_spending_total, new_spending_total, pad(15)]
+
+    exec.account::set_item
+    dropw # drop old value
+    # STACK: [new_spending_total, pad(15)]
+    
+    drop
+    # STACK: [pad(15)]
+    
+    push.0
+    # STACK: [0, pad(15)] which is pad(16)
+end
+
+#! Sets a new spending limit. Requires authentication.
+#!
+#! Inputs:  [new_limit, pad(15)]
+#! Outputs: [pad(16)]
+#!
+#! Where:
+#! - new_limit is the new spending limit to set
+#!
+#! Panics if:
+#! - the new limit is zero
+#!
+#! Invocation: call
+export.set_spending_limit
+    # STACK: [new_limit, pad(15)]
+    # Validate new limit is positive
+    dup neq.0 assert.err=ERR_SPENDING_LIMIT_INVALID_LIMIT
+    # STACK: [new_limit, pad(15)]
+
+    # Store new spending limit
+    push.SPENDING_LIMIT_SLOT
+    push.0.0.0
+    dup.1
+    movdn.4 movdn.4 movdn.4 movdn.4
+    exec.account::set_item
+    dropw
+    
+    drop
+    push.0
+end
+
+#! Sets a new time period for spending limit resets. Requires authentication.
+#!
+#! Inputs:  [new_period, pad(15)]
+#! Outputs: [pad(16)]
+#!
+#! Where:
+#! - new_period is the new time period in seconds
+#!
+#! Panics if:
+#! - the new period is zero
+#!
+#! Invocation: call
+export.set_time_period
+    # STACK: [new_period, pad(15)]
+    # Validate new period is positive
+    dup neq.0 assert.err=ERR_SPENDING_LIMIT_INVALID_PERIOD
+    # STACK: [new_period, pad(15)]
+
+    # Store new time period
+    push.TIME_PERIOD_SLOT
+    push.0.0.0
+    dup.1
+    movdn.4 movdn.4 movdn.4 movdn.4
+    exec.account::set_item
+    dropw
+
+    drop
+    push.0
+end
+
+#! Gets the current spending limit information.
+#!
+#! Inputs:  [pad(16)]
+#! Outputs: [spending_limit, current_spending, last_reset, time_period, pad(12)]
+#!
+#! Invocation: call
+export.get_spending_info
+    # Get spending limit
+    push.SPENDING_LIMIT_SLOT exec.account::get_item drop drop drop
+    # => [spending_limit, pad(16)]
+
+    # Get current spending
+    push.CURRENT_SPENDING_SLOT exec.account::get_item drop drop drop
+    # => [current_spending, spending_limit, pad(16)]
+
+    # Get last reset timestamp
+    push.LAST_RESET_TIMESTAMP_SLOT exec.account::get_item drop drop drop
+    # => [last_reset, current_spending, spending_limit, pad(16)]
+
+    # Get time period
+    push.TIME_PERIOD_SLOT exec.account::get_item drop drop drop
+    # => [time_period, last_reset, current_spending, spending_limit, pad(16)]
+
+    # Rearrange stack
+    movdn.3 movdn.3 movdn.3
+    # => [spending_limit, current_spending, last_reset, time_period, pad(16)]
+
+    # Clean up unused pad
+    swap drop swap drop swap drop swap drop
+    # => [spending_limit, current_spending, last_reset, time_period, pad(12)]
+end
+
+# HELPER PROCEDURES
+# =================================================================================================
+
+#! Checks if the time period has elapsed and resets spending if needed.
+#!
+#! Inputs:  [current_timestamp, amount, pad(15)]
+#! Outputs: [amount, pad(15)]
+#!
+#! Where:
+#! - current_timestamp is the current block timestamp
+#! - amount is preserved on stack
+proc.maybe_reset_spending_counter
+    # STACK: [current_timestamp, amount, pad(15)]
+    
+    # Get last reset timestamp and time period
+    push.LAST_RESET_TIMESTAMP_SLOT exec.account::get_item drop drop drop
+    # STACK: [last_reset_timestamp, current_timestamp, amount, pad(15)]
+
+    push.TIME_PERIOD_SLOT exec.account::get_item drop drop drop
+    # STACK: [time_period, last_reset_timestamp, current_timestamp, amount, pad(15)]
+
+    # Calculate time elapsed: current_timestamp - last_reset_timestamp
+    dup.2   # copy current_timestamp
+    movup.2 # move last_reset_timestamp up
+    sub
+    # STACK: [time_elapsed, time_period, current_timestamp, amount, pad(15)]
+    
+    # Check if time period has elapsed: time_elapsed >= time_period
+    dup.1
+    gte
+    # STACK: [should_reset, time_period, current_timestamp, amount, pad(15)]
+
+    if.true
+        # TIME PERIOD HAS ELAPSED, RESET SPENDING
+        # STACK: [time_period, current_timestamp, amount, pad(15)]
+        
+        # Reset current spending to 0
+        push.CURRENT_SPENDING_SLOT
+        push.0.0.0.0 # WORD of zeros
+        exec.account::set_item
+        dropw # drop old value
+        # STACK: [time_period, current_timestamp, amount, pad(15)]
+        
+        # Isolate current_timestamp and amount for the next operation
+        swap drop # drop time_period
+        # STACK: [current_timestamp, amount, pad(15)]
+        
+        # Update last reset timestamp to current_timestamp
+        push.LAST_RESET_TIMESTAMP_SLOT
+        push.0.0.0
+        dup.2 # copy current_timestamp
+        movdn.4 movdn.4 movdn.4 movdn.4
+        exec.account::set_item
+        dropw # drop old value
+        # STACK: [current_timestamp, amount, pad(15)]
+        
+        drop # drop the original current_timestamp
+        # STACK: [amount, pad(15)]
+    else
+        # TIME PERIOD NOT ELAPSED, DO NOT RESET
+        # STACK: [time_period, current_timestamp, amount, pad(15)]
+        drop drop # drop time_period and current_timestamp
+        # STACK: [amount, pad(15)]
+    end
+end 
