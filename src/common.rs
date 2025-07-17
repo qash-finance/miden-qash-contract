@@ -3,11 +3,12 @@ use miden_assembly::{
     ast::{Module, ModuleKind},
 };
 use miden_client::{
-    Client, ClientError,
+    Client, ClientError, Felt, Word, ZERO,
     account::{
         Account, AccountBuilder, AccountId, AccountStorageMode, AccountType, StorageMap,
         StorageSlot,
     },
+    asset::{Asset, FungibleAsset, TokenSymbol},
     auth::AuthSecretKey,
     builder::ClientBuilder,
     crypto::SecretKey,
@@ -19,20 +20,23 @@ use miden_client::{
     rpc::{Endpoint, TonicRpcClient},
     transaction::{OutputNote, TransactionRequestBuilder, TransactionScript},
 };
-use miden_crypto::{Felt, Word};
-use miden_crypto::{ZERO, rand::FeltRng};
 use miden_lib::{
-    account::{auth::RpoFalcon512, wallets::BasicWallet},
+    account::{auth::RpoFalcon512, faucets::BasicFungibleFaucet, wallets::BasicWallet},
     transaction::TransactionKernel,
 };
 use miden_objects::{
+    NoteError,
     account::{AccountComponent, NetworkId},
     vm::AdviceMap,
 };
 use rand::{RngCore, rngs::StdRng};
 use serde::de::value::Error;
-use std::sync::Arc;
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+use std::{sync::Arc, time::Duration};
+use tokio::time::sleep;
 
 use crate::constants::{MULTISIG_CODE_PATH, NETWORK_ID, SIGNER_WEIGHTS, THRESHOLD, TOTAL_WEIGHT};
 
@@ -68,16 +72,65 @@ pub async fn delete_keystore_and_store() {
 // Helper to instantiate Client
 pub async fn instantiate_client(endpoint: Endpoint) -> Result<Client, ClientError> {
     let timeout_ms = 10_000;
+
     let rpc_api = Arc::new(TonicRpcClient::new(&endpoint, timeout_ms));
 
     let client = ClientBuilder::new()
-        .with_rpc(rpc_api.clone())
-        .with_filesystem_keystore("./keystore")
+        .rpc(rpc_api.clone())
+        .filesystem_keystore("./keystore")
         .in_debug_mode(true)
         .build()
         .await?;
 
     Ok(client)
+}
+
+pub async fn initialize_client_and_multisig()
+-> Result<(Client, Account, Word, Vec<Word>, Vec<SecretKey>), Box<dyn std::error::Error>> {
+    let endpoint = if NETWORK_ID == NetworkId::Testnet {
+        Endpoint::testnet()
+    } else {
+        Endpoint::devnet()
+    };
+
+    let mut client = instantiate_client(endpoint).await.unwrap();
+
+    client.sync_state().await.unwrap();
+
+    // Deploy my multisig contract
+    let multisig_code = fs::read_to_string(Path::new(MULTISIG_CODE_PATH)).unwrap();
+
+    let (
+        multisig_contract,
+        multisig_seed,
+        multisig_key_pair,
+        original_signer_pub_keys,
+        original_signer_secret_keys,
+    ) = create_multisig_account(
+        &mut client,
+        &multisig_code,
+        THRESHOLD,
+        SIGNER_WEIGHTS.to_vec(),
+    )
+    .await?;
+
+    client
+        .add_account(&multisig_contract, Some(multisig_seed.into()), false)
+        .await
+        .unwrap();
+
+    println!(
+        "📄 Multisig contract ID: {}",
+        multisig_contract.id().to_hex()
+    );
+
+    Ok((
+        client,
+        multisig_contract,
+        multisig_seed,
+        original_signer_pub_keys,
+        original_signer_secret_keys,
+    ))
 }
 
 // Creates library
@@ -109,8 +162,8 @@ pub async fn create_public_note(
         .unwrap()
         .with_debug_mode(true);
     let rng = client.rng();
-    let serial_num = rng.draw_word();
-    let note_script = NoteScript::compile(note_code, assembler.clone()).unwrap();
+    let serial_num = rng.inner_mut().draw_word();
+    let note_script = NoteScript::compile(note_code, assembler).unwrap();
     let note_inputs = NoteInputs::new([].to_vec()).unwrap();
     let recipient = NoteRecipient::new(serial_num, note_script, note_inputs.clone());
     let tag = NoteTag::for_public_use_case(0, 0, NoteExecutionMode::Local).unwrap();
@@ -126,7 +179,7 @@ pub async fn create_public_note(
     let note = Note::new(assets, metadata, recipient);
 
     let note_req = TransactionRequestBuilder::new()
-        .with_own_output_notes(vec![OutputNote::Full(note.clone())])
+        .own_output_notes(vec![OutputNote::Full(note.clone())])
         .build()
         .unwrap();
     let tx_result = client
@@ -140,6 +193,29 @@ pub async fn create_public_note(
     Ok(note)
 }
 
+pub async fn create_basic_faucet(
+    client: &mut Client,
+    keystore: FilesystemKeyStore<StdRng>,
+) -> Result<miden_client::account::Account, ClientError> {
+    let mut init_seed = [0u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+    let key_pair = SecretKey::with_rng(client.rng());
+    let symbol = TokenSymbol::new("MID").unwrap();
+    let decimals = 8;
+    let max_supply = Felt::new(1_000_000_000);
+    let builder = AccountBuilder::new(init_seed)
+        .account_type(AccountType::FungibleFaucet)
+        .storage_mode(AccountStorageMode::Public)
+        .with_component(RpoFalcon512::new(key_pair.public_key()))
+        .with_component(BasicFungibleFaucet::new(symbol, decimals, max_supply).unwrap());
+    let (account, seed) = builder.build().unwrap();
+    client.add_account(&account, Some(seed), false).await?;
+    keystore
+        .add_key(&AuthSecretKey::RpoFalcon512(key_pair))
+        .unwrap();
+    Ok(account)
+}
+
 // Creates basic account
 pub async fn create_basic_account(
     client: &mut Client,
@@ -149,9 +225,7 @@ pub async fn create_basic_account(
     client.rng().fill_bytes(&mut init_seed);
 
     let key_pair = SecretKey::with_rng(client.rng());
-    let anchor_block = client.get_latest_epoch_block().await.unwrap();
     let builder = AccountBuilder::new(init_seed)
-        .anchor((&anchor_block).try_into().unwrap())
         .account_type(AccountType::RegularAccountUpdatableCode)
         .storage_mode(AccountStorageMode::Public)
         .with_component(RpoFalcon512::new(key_pair.public_key().clone()))
@@ -170,7 +244,7 @@ pub async fn create_multisig_account(
     account_code: &String,
     num_signers: usize,
     signer_weights: Vec<usize>,
-) -> Result<(Account, Word, Vec<Word>, Vec<SecretKey>), ClientError> {
+) -> Result<(Account, Word, SecretKey, Vec<Word>, Vec<SecretKey>), ClientError> {
     let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
 
     // generate keypairs for signers
@@ -211,15 +285,17 @@ pub async fn create_multisig_account(
     .unwrap()
     .with_supports_all_types();
 
-    let anchor_block = client.get_latest_epoch_block().await.unwrap();
-
     let mut init_seed = [0_u8; 32];
     client.rng().fill_bytes(&mut init_seed);
 
+    let multisig_key_pair = SecretKey::with_rng(client.rng());
+
+    let auth_componnet: AccountComponent = RpoFalcon512::new(multisig_key_pair.public_key()).into();
+
     let (multisig_contract, multisig_seed) = AccountBuilder::new(init_seed)
-        .anchor((&anchor_block).try_into().unwrap())
         .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Public)
+        .with_auth_component(auth_componnet)
         .with_component(multisig_component.clone())
         .build()
         .unwrap();
@@ -227,9 +303,26 @@ pub async fn create_multisig_account(
     Ok((
         multisig_contract,
         multisig_seed,
+        multisig_key_pair,
         signer_pub_keys,
         signers_secret_keys,
     ))
+}
+
+pub fn create_tx_script(
+    script_code: String,
+    library: Option<Library>,
+) -> Result<TransactionScript, Error> {
+    let assembler = TransactionKernel::assembler();
+
+    let assembler = match library {
+        Some(lib) => assembler.with_library(lib),
+        None => Ok(assembler.with_debug_mode(true)),
+    }
+    .unwrap();
+    let tx_script = TransactionScript::compile(script_code, assembler).unwrap();
+
+    Ok(tx_script)
 }
 
 pub fn generate_keypairs(num_keys: usize, client: &mut Client) -> (Vec<SecretKey>, Vec<Word>) {
@@ -253,22 +346,6 @@ pub fn generate_keypair(client: &mut Client) -> (SecretKey, Word) {
     (private_key, public_key.into())
 }
 
-pub fn create_tx_script(
-    script_code: String,
-    library: Option<Library>,
-) -> Result<TransactionScript, Error> {
-    let assembler = TransactionKernel::assembler();
-
-    let assembler = match library {
-        Some(lib) => assembler.with_library(lib),
-        None => Ok(assembler.with_debug_mode(true)),
-    }
-    .unwrap();
-    let tx_script = TransactionScript::compile(script_code, [], assembler).unwrap();
-
-    Ok(tx_script)
-}
-
 pub async fn build_and_submit_tx(
     tx_script: TransactionScript,
     advice_map: AdviceMap,
@@ -276,7 +353,7 @@ pub async fn build_and_submit_tx(
     account_id: AccountId,
 ) -> Result<(), ClientError> {
     let tx_add_signer_request = TransactionRequestBuilder::new()
-        .with_custom_script(tx_script)
+        .custom_script(tx_script)
         .extend_advice_map(advice_map)
         .build()
         .unwrap();
@@ -310,45 +387,176 @@ pub fn prepare_script(
     Ok(tx_script)
 }
 
-pub async fn initialize_client_and_multisig()
--> Result<(Client, Account, Word, Vec<Word>, Vec<SecretKey>), Box<dyn std::error::Error>> {
-    let endpoint = if NETWORK_ID == NetworkId::Testnet {
-        Endpoint::testnet()
-    } else {
-        Endpoint::devnet()
-    };
+pub async fn wait_for_notes(
+    client: &mut Client,
+    account_id: &miden_client::account::Account,
+    expected: usize,
+) -> Result<(), ClientError> {
+    loop {
+        client.sync_state().await?;
+        let notes = client.get_consumable_notes(Some(account_id.id())).await?;
+        if notes.len() >= expected {
+            break;
+        }
+        println!(
+            "{} consumable notes found for account {}. Waiting...",
+            notes.len(),
+            account_id.id().to_hex()
+        );
+        sleep(Duration::from_secs(3)).await;
+    }
+    Ok(())
+}
 
-    let mut client = instantiate_client(endpoint).await.unwrap();
+/// Creates [num_accounts] accounts, [num_faucets] faucets, and mints the given [balances].
+///
+/// - `balances[a][f]`: how many tokens faucet `f` should mint for account `a`.
+/// - Returns: a tuple of `(Vec<Account>, Vec<Account>)` i.e. (accounts, faucets).
+pub async fn setup_accounts_and_faucets(
+    client: &mut Client,
+    keystore: FilesystemKeyStore<StdRng>,
+    num_accounts: usize,
+    num_faucets: usize,
+    balances: Vec<Vec<u64>>,
+) -> Result<(Vec<Account>, Vec<Account>), ClientError> {
+    // ---------------------------------------------------------------------
+    // 1)  Create basic accounts
+    // ---------------------------------------------------------------------
+    let mut accounts = Vec::with_capacity(num_accounts);
+    for i in 0..num_accounts {
+        let (account, _) = create_basic_account(client, keystore.clone()).await?;
+        println!("Created Account #{i} ⇒ ID: {:?}", account.id().to_hex());
+        accounts.push(account);
+    }
 
-    client.sync_state().await.unwrap();
+    // ---------------------------------------------------------------------
+    // 2)  Create basic faucets
+    // ---------------------------------------------------------------------
+    let mut faucets = Vec::with_capacity(num_faucets);
+    for j in 0..num_faucets {
+        let faucet = create_basic_faucet(client, keystore.clone()).await?;
+        println!("Created Faucet #{j} ⇒ ID: {:?}", faucet.id().to_hex());
+        faucets.push(faucet);
+    }
 
-    // Deploy my multisig contract
-    let multisig_code = fs::read_to_string(Path::new(MULTISIG_CODE_PATH)).unwrap();
+    // Tell the client about the new accounts/faucets
+    client.sync_state().await?;
 
-    let (multisig_contract, multisig_seed, original_signer_pub_keys, original_signer_secret_keys) =
-        create_multisig_account(
-            &mut client,
-            &multisig_code,
-            THRESHOLD,
-            SIGNER_WEIGHTS.to_vec(),
-        )
-        .await?;
+    // ---------------------------------------------------------------------
+    // 3)  Mint tokens
+    // ---------------------------------------------------------------------
+    // `minted_notes[i]` collects the notes minted **for** `accounts[i]`
+    let mut minted_notes: Vec<Vec<Note>> = vec![Vec::new(); num_accounts];
 
-    client
-        .add_account(&multisig_contract, Some(multisig_seed), false)
-        .await
-        .unwrap();
+    for (acct_idx, account) in accounts.iter().enumerate() {
+        for (faucet_idx, faucet) in faucets.iter().enumerate() {
+            let amount = balances[acct_idx][faucet_idx];
+            if amount == 0 {
+                continue;
+            }
+
+            println!("Minting {amount} tokens from Faucet #{faucet_idx} to Account #{acct_idx}");
+
+            // Build & submit the mint transaction
+            let asset = FungibleAsset::new(faucet.id(), amount).unwrap();
+            let tx_request = TransactionRequestBuilder::new()
+                .build_mint_fungible_asset(asset, account.id(), NoteType::Public, client.rng())
+                .unwrap();
+
+            let tx_exec = client.new_transaction(faucet.id(), tx_request).await?;
+            client.submit_transaction(tx_exec.clone()).await?;
+
+            // Remember the freshly-created note so we can consume it later
+            let minted_note = match tx_exec.created_notes().get_note(0) {
+                OutputNote::Full(n) => n.clone(),
+                _ => panic!("Expected OutputNote::Full, got something else"),
+            };
+            minted_notes[acct_idx].push(minted_note);
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 4)  ONE wait-phase – ensure every account can now see all its notes
+    // ---------------------------------------------------------------------
+    for (acct_idx, account) in accounts.iter().enumerate() {
+        let expected = minted_notes[acct_idx].len();
+        if expected > 0 {
+            wait_for_notes(client, account, expected).await?;
+        }
+    }
+    client.sync_state().await?;
+
+    // ---------------------------------------------------------------------
+    // 5)  Consume notes so the tokens live in the public vaults
+    // ---------------------------------------------------------------------
+    for (acct_idx, account) in accounts.iter().enumerate() {
+        for note in &minted_notes[acct_idx] {
+            let consume_req = TransactionRequestBuilder::new()
+                .authenticated_input_notes([(note.id(), None)])
+                .build()
+                .unwrap();
+
+            let tx_exec = client.new_transaction(account.id(), consume_req).await?;
+            client.submit_transaction(tx_exec).await?;
+        }
+    }
+    client.sync_state().await?;
+
+    Ok((accounts, faucets))
+}
+
+pub fn create_gift_note_recallable(
+    creator: AccountId,
+    offered_asset: Asset,
+    secret_hash: [Felt; 4],
+    serial_num: [Felt; 4],
+) -> Result<Note, NoteError> {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let path: PathBuf = [manifest_dir, "masm", "notes", "gift_recallable.masm"]
+        .iter()
+        .collect();
+
+    let note_code = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("Error reading {}: {}", path.display(), err));
+
+    let assembler = TransactionKernel::assembler().with_debug_mode(true);
+    let note_script = NoteScript::compile(note_code, assembler).unwrap();
+    let note_type = NoteType::Public;
+
+    let gift_tag = NoteTag::for_public_use_case(0, 0, NoteExecutionMode::Local)?;
+
+    let inputs = NoteInputs::new(vec![
+        secret_hash[0],
+        secret_hash[1],
+        secret_hash[2],
+        secret_hash[3],
+    ])?;
+
+    let aux = Felt::new(0);
+
+    // build the outgoing note
+    let metadata = NoteMetadata::new(
+        creator,
+        note_type,
+        gift_tag,
+        NoteExecutionHint::always(),
+        aux,
+    )?;
+
+    let assets = NoteAssets::new(vec![offered_asset])?;
+    let recipient = NoteRecipient::new(serial_num, note_script.clone(), inputs.clone());
+    let note = Note::new(assets.clone(), metadata, recipient.clone());
 
     println!(
-        "📄 Multisig contract ID: {}",
-        multisig_contract.id().to_bech32(NETWORK_ID)
+        "inputlen: {:?}, NoteInputs: {:?}",
+        inputs.num_values(),
+        inputs.values()
     );
+    println!("tag: {:?}", note.metadata().tag());
+    println!("aux: {:?}", note.metadata().aux());
+    println!("note type: {:?}", note.metadata().note_type());
+    println!("hint: {:?}", note.metadata().execution_hint());
+    println!("recipient: {:?}", note.recipient().digest());
 
-    Ok((
-        client,
-        multisig_contract,
-        multisig_seed,
-        original_signer_pub_keys,
-        original_signer_secret_keys,
-    ))
+    Ok(note)
 }

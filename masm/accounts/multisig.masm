@@ -128,8 +128,8 @@ export.add_signer
   # OS => [NEW_SIGNER_PUBKEY_3, NEW_SIGNER_PUBKEY_2, NEW_SIGNER_PUBKEY_1, NEW_SIGNER_PUBKEY_0, NEW_SIGNER_PUBKEY_3, NEW_SIGNER_PUBKEY_2, NEW_SIGNER_PUBKEY_1, NEW_SIGNER_PUBKEY_0]
 
   push.PUBKEY_MAP_INDEX
+
   # OS => [PUBKEY_MAP_INDEX, NEW_SIGNER_PUBKEY_3, NEW_SIGNER_PUBKEY_2, NEW_SIGNER_PUBKEY_1, NEW_SIGNER_PUBKEY_0, NEW_SIGNER_PUBKEY_3, NEW_SIGNER_PUBKEY_2, NEW_SIGNER_PUBKEY_1, NEW_SIGNER_PUBKEY_0]
-  
   exec.account::get_map_item
   # OS => [WEIGHT_0, WEIGHT_1, WEIGHT_2, WEIGHT_3, NEW_SIGNER_PUBKEY_3, NEW_SIGNER_PUBKEY_2, NEW_SIGNER_PUBKEY_1, NEW_SIGNER_PUBKEY_0]
 
@@ -216,7 +216,6 @@ export.add_signer
 
   drop drop drop drop   
 
-  push.1 exec.account::incr_nonce
 
   exec.sys::truncate_stack
 end
@@ -311,18 +310,6 @@ export.remove_signer
   exec.sys::truncate_stack
 end
 
-export.receive_asset
-  call.wallet::receive_asset
-  push.4
-  drop
-end
-
-export.move_asset_to_note
-  # todo: we need to verify signature
-  call.wallet::move_asset_to_note
-  push.5
-  drop
-end
 
 ############################
 #### PRIVATE FUNCTIONS #####

@@ -14,6 +14,8 @@ A minimal example for compiling, deploying, and testing MASM contracts & notes, 
     - [Add Signer](#add-signer)
     - [Remove Signer](#remove-signer)
     - [Change Threshold](#change-threshold)
+  - [Gift](#gift)
+    - [Create Gift](#create-gift)
 
 ---
 
@@ -95,6 +97,18 @@ Change threshold with invalid threshold (should fail):
 
 ```bash
 cargo test change_threshold_with_invalid_threshold --release -- --nocapture --test-threads=1
+```
+
+---
+
+## Gift
+
+### Create Gift
+
+Create gift success:
+
+```bash
+cargo test create_and_open_gift_success --release -- --nocapture --test-threads=1
 ```
 
 ---
