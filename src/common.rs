@@ -1,7 +1,3 @@
-use miden_assembly::{
-    Assembler, DefaultSourceManager, Library, LibraryPath,
-    ast::{Module, ModuleKind},
-};
 use miden_client::{
     Client, ClientError, Felt, Word, ZERO,
     account::{
@@ -23,6 +19,10 @@ use miden_client::{
 use miden_lib::{
     account::{auth::RpoFalcon512, faucets::BasicFungibleFaucet, wallets::BasicWallet},
     transaction::TransactionKernel,
+};
+use miden_objects::{
+    Hasher,
+    assembly::{Assembler, DefaultSourceManager, Library, LibraryPath, Module, ModuleKind},
 };
 use miden_objects::{
     NoteError,
@@ -70,11 +70,13 @@ pub async fn delete_keystore_and_store() {
 }
 
 // Helper to instantiate Client
-pub async fn instantiate_client(endpoint: Endpoint) -> Result<Client, ClientError> {
+pub async fn instantiate_client(
+    endpoint: Endpoint,
+) -> Result<(Client, FilesystemKeyStore<StdRng>), ClientError> {
     let timeout_ms = 10_000;
+    let keystore = FilesystemKeyStore::new("./keystore".into()).unwrap();
 
     let rpc_api = Arc::new(TonicRpcClient::new(&endpoint, timeout_ms));
-
     let client = ClientBuilder::new()
         .rpc(rpc_api.clone())
         .filesystem_keystore("./keystore")
@@ -82,7 +84,7 @@ pub async fn instantiate_client(endpoint: Endpoint) -> Result<Client, ClientErro
         .build()
         .await?;
 
-    Ok(client)
+    Ok((client, keystore))
 }
 
 pub async fn initialize_client_and_multisig()
@@ -93,7 +95,7 @@ pub async fn initialize_client_and_multisig()
         Endpoint::devnet()
     };
 
-    let mut client = instantiate_client(endpoint).await.unwrap();
+    let (mut client, keystore) = instantiate_client(endpoint).await.unwrap();
 
     client.sync_state().await.unwrap();
 
@@ -111,6 +113,7 @@ pub async fn initialize_client_and_multisig()
         &multisig_code,
         THRESHOLD,
         SIGNER_WEIGHTS.to_vec(),
+        keystore.clone(),
     )
     .await?;
 
@@ -137,8 +140,8 @@ pub async fn initialize_client_and_multisig()
 pub fn create_library(
     account_code: String,
     library_path: &str,
-) -> Result<miden_assembly::Library, Box<dyn std::error::Error>> {
-    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
+) -> Result<miden_objects::assembly::Library, Box<dyn std::error::Error>> {
+    let assembler = TransactionKernel::assembler().with_debug_mode(true);
     let source_manager = Arc::new(DefaultSourceManager::default());
     let module = Module::parser(ModuleKind::Library).parse_str(
         LibraryPath::new(library_path)?,
@@ -206,7 +209,7 @@ pub async fn create_basic_faucet(
     let builder = AccountBuilder::new(init_seed)
         .account_type(AccountType::FungibleFaucet)
         .storage_mode(AccountStorageMode::Public)
-        .with_component(RpoFalcon512::new(key_pair.public_key()))
+        .with_auth_component(RpoFalcon512::new(key_pair.public_key()))
         .with_component(BasicFungibleFaucet::new(symbol, decimals, max_supply).unwrap());
     let (account, seed) = builder.build().unwrap();
     client.add_account(&account, Some(seed), false).await?;
@@ -228,7 +231,7 @@ pub async fn create_basic_account(
     let builder = AccountBuilder::new(init_seed)
         .account_type(AccountType::RegularAccountUpdatableCode)
         .storage_mode(AccountStorageMode::Public)
-        .with_component(RpoFalcon512::new(key_pair.public_key().clone()))
+        .with_auth_component(RpoFalcon512::new(key_pair.public_key().clone()))
         .with_component(BasicWallet);
     let (account, seed) = builder.build().unwrap();
     client.add_account(&account, Some(seed), false).await?;
@@ -244,6 +247,7 @@ pub async fn create_multisig_account(
     account_code: &String,
     num_signers: usize,
     signer_weights: Vec<usize>,
+    keystore: FilesystemKeyStore<StdRng>,
 ) -> Result<(Account, Word, SecretKey, Vec<Word>, Vec<SecretKey>), ClientError> {
     let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
 
@@ -299,7 +303,9 @@ pub async fn create_multisig_account(
         .with_component(multisig_component.clone())
         .build()
         .unwrap();
-
+    keystore
+        .add_key(&AuthSecretKey::RpoFalcon512(multisig_key_pair.clone()))
+        .unwrap();
     Ok((
         multisig_contract,
         multisig_seed,
@@ -316,7 +322,7 @@ pub fn create_tx_script(
     let assembler = TransactionKernel::assembler();
 
     let assembler = match library {
-        Some(lib) => assembler.with_library(lib),
+        Some(lib) => assembler.with_library(&lib),
         None => Ok(assembler.with_debug_mode(true)),
     }
     .unwrap();
@@ -425,7 +431,6 @@ pub async fn setup_accounts_and_faucets(
     let mut accounts = Vec::with_capacity(num_accounts);
     for i in 0..num_accounts {
         let (account, _) = create_basic_account(client, keystore.clone()).await?;
-        println!("Created Account #{i} ⇒ ID: {:?}", account.id().to_hex());
         accounts.push(account);
     }
 
@@ -435,7 +440,6 @@ pub async fn setup_accounts_and_faucets(
     let mut faucets = Vec::with_capacity(num_faucets);
     for j in 0..num_faucets {
         let faucet = create_basic_faucet(client, keystore.clone()).await?;
-        println!("Created Faucet #{j} ⇒ ID: {:?}", faucet.id().to_hex());
         faucets.push(faucet);
     }
 
@@ -454,8 +458,6 @@ pub async fn setup_accounts_and_faucets(
             if amount == 0 {
                 continue;
             }
-
-            println!("Minting {amount} tokens from Faucet #{faucet_idx} to Account #{acct_idx}");
 
             // Build & submit the mint transaction
             let asset = FungibleAsset::new(faucet.id(), amount).unwrap();
@@ -508,11 +510,11 @@ pub async fn setup_accounts_and_faucets(
 pub fn create_gift_note_recallable(
     creator: AccountId,
     offered_asset: Asset,
-    secret_hash: [Felt; 4],
+    secret: [Felt; 4],
     serial_num: [Felt; 4],
 ) -> Result<Note, NoteError> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path: PathBuf = [manifest_dir, "masm", "notes", "gift_recallable.masm"]
+    let path: PathBuf = [manifest_dir, "masm", "notes", "gift.masm"]
         .iter()
         .collect();
 
@@ -525,12 +527,12 @@ pub fn create_gift_note_recallable(
 
     let gift_tag = NoteTag::for_public_use_case(0, 0, NoteExecutionMode::Local)?;
 
-    let inputs = NoteInputs::new(vec![
-        secret_hash[0],
-        secret_hash[1],
-        secret_hash[2],
-        secret_hash[3],
-    ])?;
+    let mut secret_vals = vec![secret[0], secret[1], secret[2], secret[3]];
+    secret_vals.splice(0..0, Word::default().iter().cloned());
+    let digest = Hasher::hash_elements(&secret_vals);
+    println!("digest: {:?}", digest);
+
+    let inputs = NoteInputs::new(digest.to_vec())?;
 
     let aux = Felt::new(0);
 

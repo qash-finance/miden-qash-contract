@@ -3,7 +3,7 @@ use miden_client::rpc::Endpoint;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = instantiate_client(Endpoint::testnet()).await?;
+    let (mut client, _) = instantiate_client(Endpoint::testnet()).await?;
 
     client.sync_state().await?;
 

@@ -13,7 +13,7 @@ async fn deploy_multisig() -> Result<(), ClientError> {
     // Instantiate client
     // -------------------------------------------------------------------------
     let endpoint = Endpoint::testnet();
-    let mut client = instantiate_client(endpoint).await.unwrap();
+    let (mut client, keystore) = instantiate_client(endpoint).await.unwrap();
 
     client.sync_state().await.unwrap();
 
@@ -31,6 +31,7 @@ async fn deploy_multisig() -> Result<(), ClientError> {
         &multisig_code,
         THRESHOLD,
         SIGNER_WEIGHTS.to_vec(),
+        keystore,
     )
     .await?;
 

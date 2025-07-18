@@ -1,4 +1,6 @@
-use masm_project_template::common::delete_keystore_and_store;
+use masm_project_template::common::{
+    create_basic_account, create_basic_faucet, delete_keystore_and_store,
+};
 use masm_project_template::{
     common::{
         build_and_submit_tx, generate_keypair, initialize_client_and_multisig, prepare_felt_vec,
@@ -9,6 +11,10 @@ use masm_project_template::{
         NEW_SIGNER_PUBKEY_KEY_SLOT, NEW_SIGNER_WEIGHT_KEY_SLOT, SIGNERS_SLOT, SYNC_STATE_WAIT_TIME,
     },
 };
+use miden_client::asset::FungibleAsset;
+use miden_client::keystore::FilesystemKeyStore;
+use miden_client::note::NoteType;
+use miden_client::transaction::TransactionRequestBuilder;
 use miden_objects::{Word, account::NetworkId, vm::AdviceMap};
 use tokio::time::{Duration, sleep};
 
@@ -106,95 +112,95 @@ async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// #[tokio::test]
-// #[should_panic]
-// async fn add_signer_with_same_public_key() {
-//     delete_keystore_and_store().await;
+#[tokio::test]
+#[should_panic]
+async fn add_signer_with_same_public_key() {
+    delete_keystore_and_store().await;
 
-//     // -------------------------------------------------------------------------
-//     // Instantiate client
-//     // -------------------------------------------------------------------------
-//     let (
-//         mut client,
-//         multisig_contract,
-//         _multisig_seed,
-//         original_signer_pub_keys,
-//         _original_signer_secret_keys,
-//     ) = initialize_client_and_multisig().await.unwrap();
+    // -------------------------------------------------------------------------
+    // Instantiate client
+    // -------------------------------------------------------------------------
+    let (
+        mut client,
+        multisig_contract,
+        _multisig_seed,
+        original_signer_pub_keys,
+        _original_signer_secret_keys,
+    ) = initialize_client_and_multisig().await.unwrap();
 
-//     // -------------------------------------------------------------------------
-//     // STEP 2: Prepare the Script
-//     // -------------------------------------------------------------------------
-//     let tx_script =
-//         prepare_script(ADD_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
+    // -------------------------------------------------------------------------
+    // STEP 2: Prepare the Script
+    // -------------------------------------------------------------------------
+    let tx_script =
+        prepare_script(ADD_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
 
-//     // -------------------------------------------------------------------------
-//     // STEP 3: Prepare advice map for new signer
-//     // -------------------------------------------------------------------------
-//     let mut advice_map = AdviceMap::default();
+    // -------------------------------------------------------------------------
+    // STEP 3: Prepare advice map for new signer
+    // -------------------------------------------------------------------------
+    let mut advice_map = AdviceMap::default();
 
-//     // insert public key into advice map at index 0
-//     advice_map.insert(
-//         prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
-//         original_signer_pub_keys[0].into(),
-//     );
-//     advice_map.insert(
-//         prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
-//         prepare_felt_vec(1).into(),
-//     );
+    // insert public key into advice map at index 0
+    advice_map.insert(
+        prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
+        original_signer_pub_keys[0].into(),
+    );
+    advice_map.insert(
+        prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
+        prepare_felt_vec(1).into(),
+    );
 
-//     // -------------------------------------------------------------------------
-//     // STEP 4: Build & Submit Transaction
-//     // -------------------------------------------------------------------------
-//     build_and_submit_tx(tx_script, advice_map, &mut client, multisig_contract.id())
-//         .await
-//         .unwrap();
-// }
+    // -------------------------------------------------------------------------
+    // STEP 4: Build & Submit Transaction
+    // -------------------------------------------------------------------------
+    build_and_submit_tx(tx_script, advice_map, &mut client, multisig_contract.id())
+        .await
+        .unwrap();
+}
 
-// #[tokio::test]
-// #[should_panic]
-// async fn add_signer_with_invalid_weight() {
-//     delete_keystore_and_store().await;
+#[tokio::test]
+#[should_panic]
+async fn add_signer_with_invalid_weight() {
+    delete_keystore_and_store().await;
 
-//     // -------------------------------------------------------------------------
-//     // Instantiate client
-//     // -------------------------------------------------------------------------
-//     let (
-//         mut client,
-//         multisig_contract,
-//         _multisig_seed,
-//         _original_signer_pub_keys,
-//         _original_signer_secret_keys,
-//     ) = initialize_client_and_multisig().await.unwrap();
+    // -------------------------------------------------------------------------
+    // Instantiate client
+    // -------------------------------------------------------------------------
+    let (
+        mut client,
+        multisig_contract,
+        _multisig_seed,
+        _original_signer_pub_keys,
+        _original_signer_secret_keys,
+    ) = initialize_client_and_multisig().await.unwrap();
 
-//     // -------------------------------------------------------------------------
-//     // STEP 2: Prepare the Script
-//     // -------------------------------------------------------------------------
-//     let tx_script =
-//         prepare_script(ADD_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
+    // -------------------------------------------------------------------------
+    // STEP 2: Prepare the Script
+    // -------------------------------------------------------------------------
+    let tx_script =
+        prepare_script(ADD_SIGNER_SCRIPT_PATH, MULTISIG_CODE_PATH, LIBRARY_PATH).unwrap();
 
-//     // -------------------------------------------------------------------------
-//     // STEP 3: Prepare advice map for new signer
-//     // -------------------------------------------------------------------------
-//     // generate keypair
-//     let (_, new_signer_public_key) = generate_keypair(&mut client);
+    // -------------------------------------------------------------------------
+    // STEP 3: Prepare advice map for new signer
+    // -------------------------------------------------------------------------
+    // generate keypair
+    let (_, new_signer_public_key) = generate_keypair(&mut client);
 
-//     let mut advice_map = AdviceMap::default();
+    let mut advice_map = AdviceMap::default();
 
-//     // insert public key into advice map at index 0
-//     advice_map.insert(
-//         prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
-//         new_signer_public_key.into(),
-//     );
-//     advice_map.insert(
-//         prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
-//         prepare_felt_vec(INVALID_WEIGHT as u64).into(),
-//     );
+    // insert public key into advice map at index 0
+    advice_map.insert(
+        prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
+        new_signer_public_key.into(),
+    );
+    advice_map.insert(
+        prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
+        prepare_felt_vec(INVALID_WEIGHT as u64).into(),
+    );
 
-//     // -------------------------------------------------------------------------
-//     // STEP 4: Build & Submit Transaction
-//     // -------------------------------------------------------------------------
-//     build_and_submit_tx(tx_script, advice_map, &mut client, multisig_contract.id())
-//         .await
-//         .unwrap();
-// }
+    // -------------------------------------------------------------------------
+    // STEP 4: Build & Submit Transaction
+    // -------------------------------------------------------------------------
+    build_and_submit_tx(tx_script, advice_map, &mut client, multisig_contract.id())
+        .await
+        .unwrap();
+}

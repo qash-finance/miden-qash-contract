@@ -91,8 +91,6 @@ export.change_threshold
 
   exec.account::set_item
 
-  push.1 exec.account::incr_nonce
-
   exec.sys::truncate_stack
   ############# NOTE-STORAGE UPDATE END: UPDATE THRESHOLD ###############
  
@@ -216,7 +214,6 @@ export.add_signer
 
   drop drop drop drop   
 
-
   exec.sys::truncate_stack
 end
 
@@ -304,8 +301,6 @@ export.remove_signer
 
 
   drop drop drop drop   
-
-  push.1 exec.account::incr_nonce
 
   exec.sys::truncate_stack
 end

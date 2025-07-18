@@ -105,10 +105,16 @@ cargo test change_threshold_with_invalid_threshold --release -- --nocapture --te
 
 ### Create Gift
 
-Create gift success:
+Create and consume gift success:
 
 ```bash
 cargo test create_and_open_gift_success --release -- --nocapture --test-threads=1
+```
+
+Create and consume gift fail with wrong secret:
+
+```bash
+cargo test open_gift_with_wrong_secret --release -- --nocapture --test-threads=1
 ```
 
 ---

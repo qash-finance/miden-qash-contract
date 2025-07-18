@@ -8,10 +8,11 @@ pub const SIGNER_TO_REMOVE_INDEX: usize = 2;
 pub const SIGNER_TO_REMOVE_CANT_REACH_THRESHOLD_INDEX: usize = 0;
 
 // contract storage slots
-pub const THRESHOLD_SLOT: usize = 0;
-pub const TOTAL_WEIGHT_SLOT: usize = 1;
-pub const SIGNERS_SLOT: usize = 2;
-pub const MESSAGE_HASH_SLOT: usize = 3;
+pub const PUBKEY_SLOT: usize = 0;
+pub const THRESHOLD_SLOT: usize = 1;
+pub const TOTAL_WEIGHT_SLOT: usize = 2;
+pub const SIGNERS_SLOT: usize = 3;
+pub const MESSAGE_HASH_SLOT: usize = 4;
 
 // error
 pub const INVALID_WEIGHT: usize = 100;
