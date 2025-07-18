@@ -87,7 +87,7 @@ async fn create_and_open_gift_success() -> Result<(), Box<dyn std::error::Error>
 
     // now bob need to open the gift
     let consume_req = TransactionRequestBuilder::new()
-        .authenticated_input_notes([(gift_note.id(), secret.into())])
+        .unauthenticated_input_notes([(gift_note, secret.into())])
         .build()
         .unwrap();
 
@@ -101,10 +101,30 @@ async fn create_and_open_gift_success() -> Result<(), Box<dyn std::error::Error>
     client.sync_state().await.unwrap();
 
     // bob should have `gift_amount` tokens
-    let balance_alice = alice_account.vault().get_balance(faucet.id()).unwrap();
-    let balance_bob = bob_account.vault().get_balance(faucet.id()).unwrap();
+    // Get updated account states from the client
+    let alice_account_state = client
+        .get_account(alice_account.id())
+        .await?
+        .expect("alice account not found");
+    let bob_account_state = client
+        .get_account(bob_account.id())
+        .await?
+        .expect("bob account not found");
+
+    let balance_alice = alice_account_state
+        .account()
+        .vault()
+        .get_balance(faucet.id())
+        .unwrap();
+    let balance_bob = bob_account_state
+        .account()
+        .vault()
+        .get_balance(faucet.id())
+        .unwrap();
     println!("balance_bob: {:?}", balance_bob);
     println!("balance_alice: {:?}", balance_alice);
+
+    assert_eq!(balance_bob, gift_amount);
 
     Ok(())
 }
