@@ -1,0 +1,7 @@
+use.external_contract::multisig_contract
+
+# Advice map => {0: new signer pubkey}
+# Advice map => {1: new signer weight}
+begin
+    call.multisig_contract::add_signer
+end

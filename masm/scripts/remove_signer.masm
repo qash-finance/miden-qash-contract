@@ -1,0 +1,6 @@
+use.external_contract::multisig_contract
+
+# Advice map => {0: signer pubkey to remove}
+begin
+    call.multisig_contract::remove_signer
+end
