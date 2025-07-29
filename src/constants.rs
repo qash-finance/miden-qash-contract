@@ -29,10 +29,13 @@ pub const SIGNER_TO_REMOVE_KEY_SLOT: usize = 0;
 
 // file location
 pub const MULTISIG_CODE_PATH: &str = "./masm/accounts/multisig.masm";
+pub const EVM_CODE_PATH: &str = "./masm/accounts/evm.masm";
 pub const CHANGE_THRESHOLD_SCRIPT_PATH: &str = "./masm/scripts/change_threshold.masm";
 pub const ADD_SIGNER_SCRIPT_PATH: &str = "./masm/scripts/add_signer.masm";
 pub const REMOVE_SIGNER_SCRIPT_PATH: &str = "./masm/scripts/remove_signer.masm";
+pub const VERIFY_ECDSA_SCRIPT_PATH: &str = "./masm/scripts/verify_ecdsa.masm";
 pub const LIBRARY_PATH: &str = "external_contract::multisig_contract";
+pub const EVM_LIBRARY_PATH: &str = "external_contract::evm_contract";
 
 // miden client
 pub const SYNC_STATE_WAIT_TIME: u64 = 7;

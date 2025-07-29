@@ -368,7 +368,6 @@ pub async fn build_and_submit_tx(
         .new_transaction(account_id, tx_add_signer_request)
         .await
         .unwrap();
-
     let _ = client.submit_transaction(tx_result).await?;
     Ok(())
 }
@@ -561,4 +560,66 @@ pub fn create_gift_note_recallable(
     println!("recipient: {:?}", note.recipient().digest());
 
     Ok(note)
+}
+
+pub async fn create_no_auth_component() -> Result<AccountComponent, Error> {
+    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
+    let no_auth_code = fs::read_to_string(Path::new("./masm/auth/no_auth.masm")).unwrap();
+    let no_auth_component = AccountComponent::compile(no_auth_code, assembler.clone(), vec![])
+        .unwrap()
+        .with_supports_all_types();
+
+    Ok(no_auth_component)
+}
+
+pub async fn create_no_auth_faucet(
+    client: &mut Client,
+    token_symbol: &str,
+    max_supply: u64,
+    decimals: u8,
+    storage_mode: AccountStorageMode,
+) -> Result<Account, ClientError> {
+    let mut init_seed = [0u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+
+    let no_auth_component = create_no_auth_component().await.unwrap();
+
+    let symbol = TokenSymbol::new(token_symbol).unwrap();
+
+    let (new_account, seed) = AccountBuilder::new(init_seed)
+        .account_type(AccountType::FungibleFaucet)
+        .storage_mode(storage_mode.into())
+        .with_auth_component(no_auth_component)
+        .with_component(BasicFungibleFaucet::new(symbol, decimals, Felt::new(max_supply)).unwrap())
+        .build()
+        .unwrap();
+    client.add_account(&new_account, Some(seed), false).await?;
+    Ok(new_account)
+}
+
+pub async fn create_evm_account(
+    client: &mut Client,
+    storage_mode: AccountStorageMode,
+) -> Result<Account, ClientError> {
+    let mut init_seed = [0u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+
+    let no_auth_component = create_no_auth_component().await.unwrap();
+    let account_code = fs::read_to_string(Path::new("./masm/accounts/evm.masm")).unwrap();
+    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
+
+    let evm_component = AccountComponent::compile(account_code.clone(), assembler.clone(), vec![])
+        .unwrap()
+        .with_supports_all_types();
+
+    let (new_account, seed) = AccountBuilder::new(init_seed)
+        .account_type(AccountType::FungibleFaucet)
+        .storage_mode(storage_mode.into())
+        .with_auth_component(no_auth_component)
+        .with_component(evm_component)
+        .build()
+        .unwrap();
+
+    client.add_account(&new_account, Some(seed), false).await?;
+    Ok(new_account)
 }

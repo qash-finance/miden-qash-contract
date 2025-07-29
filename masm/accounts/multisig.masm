@@ -306,6 +306,11 @@ export.remove_signer
 end
 
 
+export.is_valid_signer_signature
+  
+  exec.sys::truncate_stack
+end 
+
 ############################
 #### PRIVATE FUNCTIONS #####
 ############################

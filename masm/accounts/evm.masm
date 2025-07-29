@@ -1,0 +1,57 @@
+use.std::crypto::dsa::ecdsa::secp256k1
+use.std::sys
+
+export.verify_signature
+  push.0.0.0.0
+  adv.push_mapval
+  adv_loadw
+
+  push.1.0.0.0
+  adv.push_mapval
+  adv_loadw 
+
+  push.2.0.0.0
+  adv.push_mapval
+  adv_loadw 
+
+  push.3.0.0.0
+  adv.push_mapval
+  adv_loadw 
+
+  push.4.0.0.0
+  adv.push_mapval
+  adv_loadw 
+
+  push.5.0.0.0
+  adv.push_mapval
+  adv_loadw
+
+  push.6.0.0.0
+  adv.push_mapval
+  adv_loadw 
+
+  push.7.0.0.0
+  adv.push_mapval
+  adv_loadw
+
+  push.8.0.0.0
+  adv.push_mapval
+  adv_loadw
+
+  push.9.0.0.0
+  adv.push_mapval
+  adv_loadw
+
+  push.10.0.0.0
+  adv.push_mapval
+  adv_loadw
+
+  push.11.0.0.0
+  adv.push_mapval
+  adv_loadw
+
+  exec.secp256k1::verify
+
+  debug.stack
+  exec.sys::truncate_stack
+end
