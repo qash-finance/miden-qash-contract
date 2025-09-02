@@ -1,0 +1,44 @@
+use masm_project_template::{
+    common::{create_modular_multisig_account, delete_keystore_and_store, instantiate_client},
+    constants::{SIGNER_WEIGHTS, THRESHOLD},
+};
+use miden_client::{ClientError, rpc::Endpoint};
+use std::{fs, path::Path};
+
+#[tokio::test]
+async fn deploy_modular_multisig() -> Result<(), ClientError> {
+    delete_keystore_and_store().await;
+
+    // -------------------------------------------------------------------------
+    // Instantiate client
+    // -------------------------------------------------------------------------
+    let endpoint = Endpoint::testnet();
+    let (mut client, keystore) = instantiate_client(endpoint).await.unwrap();
+
+    client.sync_state().await.unwrap();
+
+    // Deploy my multisig contract
+    let multisig_code = fs::read_to_string(Path::new("./masm/accounts/multisig.masm")).unwrap();
+
+    let (
+        multisig_contract,
+        multisig_seed,
+        _multisig_key_pair,
+        _original_signer_pub_keys,
+        _original_signer_secret_keys,
+    ) = create_modular_multisig_account(
+        &mut client,
+        &multisig_code,
+        THRESHOLD,
+        SIGNER_WEIGHTS.to_vec(),
+        keystore,
+    )
+    .await?;
+
+    client
+        .add_account(&multisig_contract, Some(multisig_seed), false)
+        .await
+        .unwrap();
+
+    Ok(())
+}

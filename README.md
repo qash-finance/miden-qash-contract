@@ -38,6 +38,12 @@ Deploy the weighted multisig contract:
 cargo test deploy_multisig --release -- --nocapture --test-threads=1
 ```
 
+Deploy the modular and weighted multisig contract:
+
+```bash
+cargo test deploy_modular_multisig --release -- --nocapture --test-threads=1
+```
+
 ---
 
 ## Signer Management

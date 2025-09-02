@@ -1101,6 +1101,7 @@ dependencies = [
 name = "masm-project-template"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "miden-assembly 0.16.2",
  "miden-client",
  "miden-crypto 0.15.6",
@@ -1110,6 +1111,7 @@ dependencies = [
  "rand_chacha 0.9.0",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
 ]
 
@@ -2480,6 +2482,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40734c41988f7306bb04f0ecf60ec0f3f1caa34290e4e8ea471dcd3346483b83"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
 ]
 
 [[package]]

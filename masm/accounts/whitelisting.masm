@@ -1,0 +1,7 @@
+use.std::sys
+
+export.validate
+  
+
+  exec.sys::truncate_stack
+end

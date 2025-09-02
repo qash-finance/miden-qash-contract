@@ -49,7 +49,14 @@ async fn create_and_open_gift_success() -> Result<(), Box<dyn std::error::Error>
 
     let rng = client.rng();
     let serial_num = rng.inner_mut().draw_word();
-    let secret = rng.inner_mut().draw_word();
+    // let secret = rng.inner_mut().draw_word();
+    // let secret = rng.inner_mut().draw_word();
+    let secret = [
+        Felt::new(1209008168),
+        Felt::new(1192048525),
+        Felt::new(1539272724),
+        Felt::new(1649632662),
+    ];
 
     println!("serial_num: {:?}", serial_num);
     println!("secret: {:?}", secret);

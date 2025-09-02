@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // deploy fungible assets without the need of auth
     let account = create_no_auth_faucet(
         &mut client,
-        "QASH",
+        "QLAB",
         1000000000000000000,
         8,
         AccountStorageMode::Public,
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // mint qash to
     let transaction_request = TransactionRequestBuilder::new()
         .build_mint_fungible_asset(
-            FungibleAsset::new(account.id(), 100000000).unwrap(),
+            FungibleAsset::new(account.id(), 100).unwrap(),
             AccountId::from_bech32("mtst1qps470fhfg77kyzc2k0he44g8uem0yyy")
                 .unwrap()
                 .1,
@@ -45,6 +45,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .new_transaction(account.id(), transaction_request)
         .await?;
     client.submit_transaction(tx_execution_result).await?;
-    println!("Minted 100000000 tokens for mtst1qps470fhfg77kyzc2k0he44g8uem0yyy.",);
+    println!("Minted 100 tokens for mtst1qps470fhfg77kyzc2k0he44g8uem0yyy.",);
     Ok(())
 }

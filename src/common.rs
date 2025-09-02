@@ -229,7 +229,7 @@ pub async fn create_basic_account(
 
     let key_pair = SecretKey::with_rng(client.rng());
     let builder = AccountBuilder::new(init_seed)
-        .account_type(AccountType::RegularAccountUpdatableCode)
+        .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Public)
         .with_auth_component(RpoFalcon512::new(key_pair.public_key().clone()))
         .with_component(BasicWallet);
@@ -301,6 +301,113 @@ pub async fn create_multisig_account(
         .storage_mode(AccountStorageMode::Public)
         .with_auth_component(auth_componnet)
         .with_component(multisig_component.clone())
+        .build()
+        .unwrap();
+    keystore
+        .add_key(&AuthSecretKey::RpoFalcon512(multisig_key_pair.clone()))
+        .unwrap();
+    Ok((
+        multisig_contract,
+        multisig_seed,
+        multisig_key_pair,
+        signer_pub_keys,
+        signers_secret_keys,
+    ))
+}
+
+pub async fn create_modular_multisig_account(
+    client: &mut Client,
+    account_code: &String,
+    num_signers: usize,
+    signer_weights: Vec<usize>,
+    keystore: FilesystemKeyStore<StdRng>,
+) -> Result<(Account, Word, SecretKey, Vec<Word>, Vec<SecretKey>), ClientError> {
+    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
+
+    // generate keypairs for signers
+    let (signers_secret_keys, signer_pub_keys) = generate_keypairs(num_signers, client);
+
+    let mut storage_map_signers = StorageMap::new();
+    let storage_map_message_hash = StorageMap::new();
+    // loop through signers pub key
+    for (i, pub_key) in signer_pub_keys.iter().enumerate() {
+        let weight = signer_weights[i];
+        storage_map_signers.insert(
+            pub_key.into(),
+            [
+                Felt::new(weight as u64),
+                Felt::new(0 as u64),
+                Felt::new(0 as u64),
+                Felt::new(0 as u64),
+            ],
+        );
+    }
+
+    let storage_slot_map_signers = StorageSlot::Map(storage_map_signers.clone());
+    let storage_slot_map_message_hash = StorageSlot::Map(storage_map_message_hash.clone());
+
+    let threshold = Felt::new(THRESHOLD as u64);
+    let total_weight = Felt::new(TOTAL_WEIGHT as u64);
+
+    let multisig_component = AccountComponent::compile(
+        account_code.clone(),
+        assembler.clone(),
+        vec![
+            StorageSlot::Value([threshold, Felt::new(0), Felt::new(0), Felt::new(0)]),
+            StorageSlot::Value([total_weight, Felt::new(0), Felt::new(0), Felt::new(0)]),
+            storage_slot_map_signers,
+            storage_slot_map_message_hash,
+        ],
+    )
+    .unwrap()
+    .with_supports_all_types();
+
+    let whitelisting_code =
+        fs::read_to_string(Path::new("./masm/accounts/whitelisting.masm")).unwrap();
+
+    let whitelisting_component = AccountComponent::compile(
+        whitelisting_code.clone(),
+        assembler.clone(),
+        vec![StorageSlot::Value([
+            threshold,
+            Felt::new(0),
+            Felt::new(0),
+            Felt::new(0),
+        ])],
+    )
+    .unwrap()
+    .with_supports_all_types();
+
+    let spending_limit_code =
+        fs::read_to_string(Path::new("./masm/accounts/spending_limit.masm")).unwrap();
+
+    let spending_limit_component = AccountComponent::compile(
+        spending_limit_code.clone(),
+        assembler.clone(),
+        vec![StorageSlot::Value([
+            threshold,
+            Felt::new(0),
+            Felt::new(0),
+            Felt::new(0),
+        ])],
+    )
+    .unwrap()
+    .with_supports_all_types();
+
+    let mut init_seed = [0_u8; 32];
+    client.rng().fill_bytes(&mut init_seed);
+
+    let multisig_key_pair = SecretKey::with_rng(client.rng());
+
+    let auth_componnet: AccountComponent = RpoFalcon512::new(multisig_key_pair.public_key()).into();
+
+    let (multisig_contract, multisig_seed) = AccountBuilder::new(init_seed)
+        .account_type(AccountType::RegularAccountImmutableCode)
+        .storage_mode(AccountStorageMode::Public)
+        .with_auth_component(auth_componnet)
+        .with_component(multisig_component.clone())
+        .with_component(whitelisting_component.clone())
+        .with_component(spending_limit_component.clone())
         .build()
         .unwrap();
     keystore
@@ -527,9 +634,13 @@ pub fn create_gift_note_recallable(
     let gift_tag = NoteTag::for_public_use_case(0, 0, NoteExecutionMode::Local)?;
 
     let mut secret_vals = vec![secret[0], secret[1], secret[2], secret[3]];
+    println!("secret_vals: {:?}", secret_vals);
+    // Prepend 4 zero elements to match the expected input format for the hash
     secret_vals.splice(0..0, Word::default().iter().cloned());
+    println!("gift creation - secret_vals: {:?}", secret_vals);
     let digest = Hasher::hash_elements(&secret_vals);
     println!("digest: {:?}", digest);
+    println!("digest hex: {:?}", digest.to_hex());
 
     let inputs = NoteInputs::new(digest.to_vec())?;
 
@@ -545,6 +656,53 @@ pub fn create_gift_note_recallable(
     )?;
 
     let assets = NoteAssets::new(vec![offered_asset])?;
+    let recipient = NoteRecipient::new(serial_num, note_script.clone(), inputs.clone());
+    let note = Note::new(assets.clone(), metadata, recipient.clone());
+
+    println!(
+        "inputlen: {:?}, NoteInputs: {:?}",
+        inputs.num_values(),
+        inputs.values()
+    );
+    println!("tag: {:?}", note.metadata().tag());
+    println!("aux: {:?}", note.metadata().aux());
+    println!("note type: {:?}", note.metadata().note_type());
+    println!("hint: {:?}", note.metadata().execution_hint());
+    println!("recipient: {:?}", note.recipient().digest());
+
+    Ok(note)
+}
+
+pub fn create_sha256_note(
+    creator: AccountId,
+    bytes: Vec<Felt>,
+    serial_num: [Felt; 4],
+) -> Result<Note, NoteError> {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let path: PathBuf = [manifest_dir, "masm", "notes", "sha256.masm"]
+        .iter()
+        .collect();
+
+    let note_code = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("Error reading {}: {}", path.display(), err));
+
+    let assembler = TransactionKernel::assembler().with_debug_mode(true);
+    let note_script = NoteScript::compile(note_code, assembler).unwrap();
+    let note_type = NoteType::Public;
+
+    let gift_tag = NoteTag::for_public_use_case(0, 0, NoteExecutionMode::Local)?;
+    let inputs = NoteInputs::new(bytes.to_vec())?;
+    let aux = Felt::new(0);
+    // build the outgoing note
+    let metadata = NoteMetadata::new(
+        creator,
+        note_type,
+        gift_tag,
+        NoteExecutionHint::always(),
+        aux,
+    )?;
+
+    let assets = NoteAssets::new(vec![])?;
     let recipient = NoteRecipient::new(serial_num, note_script.clone(), inputs.clone());
     let note = Note::new(assets.clone(), metadata, recipient.clone());
 
