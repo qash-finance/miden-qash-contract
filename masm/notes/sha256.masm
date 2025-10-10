@@ -3,14 +3,14 @@ use.miden::contracts::wallets::basic->wallet
 use.miden::account
 use.miden::account_id
 use.std::sys
+use.std::crypto::hashes::sha256
 
-# ERRORS
+# ERRORS
 # =================================================================================================
 
 const.ERR_P2IDE_RECLAIM_ACCT_IS_NOT_SENDER="failed to reclaim Gift note because the reclaiming account is not the sender"
 
 const.ERR_P2IDE_RECLAIM_HEIGHT_NOT_REACHED="failed to reclaim Gift note because the reclaim block height is not reached yet"
-
 
 #! Helper procedure to add all assets of a note to an account.
 #!
@@ -64,29 +64,29 @@ proc.add_note_assets_to_account
     drop dropw drop
 end
 
-# => [SECRET]
+
+# input: Advice map key `1` and `2` is the secret
 begin
-    hperm
+    push.1.0.0.0 
+    adv.push_mapval
+    adv_loadw
+    push.0.0.0.0 
+    adv.push_mapval
+    adv_loadw
 
-    dropw swapw dropw
-    # => [DIGEST] # E
-    debug.stack
+    exec.sha256::hash_1to1
 
-    # Writing the note inputs to memory
     push.0 exec.note::get_inputs drop drop
-    # => [DIGEST]
+    padw push.4 mem_loadw movdn.3 swap.2
+    
+    padw push.0 mem_loadw movdn.3 swap.2
 
-    # Pad stack and load note inputs from memory
-    padw push.0 mem_loadw
-    # => [INPUTS, DIGEST]
-    debug.stack
+    swapw.3
 
-    # Assert that the note input matches the digest
-    # Will fail if the two hashes do not match
-    assert_eqw
-    # => []
+    assert_eqw assert_eqw
 
     exec.add_note_assets_to_account
-
+    
+    # Clean up the stack
     exec.sys::truncate_stack
 end

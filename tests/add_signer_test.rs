@@ -33,10 +33,7 @@ async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
         _original_signer_secret_keys,
     ) = initialize_client_and_multisig().await?;
 
-    println!(
-        "📄 Multisig contract ID: {}",
-        multisig_contract.id().to_bech32(NetworkId::Testnet)
-    );
+    println!("📄 Multisig contract ID: {}", multisig_contract.id());
 
     // -------------------------------------------------------------------------
     // STEP 2: Prepare the Script
@@ -57,12 +54,12 @@ async fn add_signer_success() -> Result<(), Box<dyn std::error::Error>> {
     // insert public key into advice map at index 0
     advice_map.insert(
         prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
-        new_signer_public_key.into(),
+        new_signer_public_key.to_vec(),
     );
     // insert new signer weight into advice map at index 1
     advice_map.insert(
         prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
-        prepare_felt_vec(1).into(),
+        prepare_felt_vec(1).to_vec(),
     );
 
     // -------------------------------------------------------------------------·
@@ -142,11 +139,11 @@ async fn add_signer_with_same_public_key() {
     // insert public key into advice map at index 0
     advice_map.insert(
         prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
-        original_signer_pub_keys[0].into(),
+        original_signer_pub_keys[0].to_vec(),
     );
     advice_map.insert(
         prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
-        prepare_felt_vec(1).into(),
+        prepare_felt_vec(1).to_vec(),
     );
 
     // -------------------------------------------------------------------------
@@ -190,11 +187,11 @@ async fn add_signer_with_invalid_weight() {
     // insert public key into advice map at index 0
     advice_map.insert(
         prepare_felt_vec(NEW_SIGNER_PUBKEY_KEY_SLOT as u64).into(),
-        new_signer_public_key.into(),
+        new_signer_public_key.to_vec(),
     );
     advice_map.insert(
         prepare_felt_vec(NEW_SIGNER_WEIGHT_KEY_SLOT as u64).into(),
-        prepare_felt_vec(INVALID_WEIGHT as u64).into(),
+        prepare_felt_vec(INVALID_WEIGHT as u64).to_vec(),
     );
 
     // -------------------------------------------------------------------------

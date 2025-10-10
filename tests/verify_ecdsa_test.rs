@@ -69,10 +69,7 @@ async fn verify_ecdsa_success() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     // print address
-    println!(
-        "evm account: {:?}",
-        evm_account.id().to_bech32(NetworkId::Testnet)
-    );
+    println!("evm account: {:?}", evm_account.id());
 
     // prepare script
     let tx_script =

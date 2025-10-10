@@ -6,9 +6,9 @@ use masm_project_template::{
     common::{create_gift_note_recallable, instantiate_client, setup_accounts_and_faucets},
     constants::NETWORK_ID,
 };
-use miden_client::Felt;
 use miden_client::rpc::Endpoint;
 use miden_client::transaction::OutputNote;
+use miden_client::{Felt, Word};
 use miden_client::{
     asset::{Asset, FungibleAsset},
     keystore::FilesystemKeyStore,
@@ -49,7 +49,14 @@ async fn create_and_open_gift_success() -> Result<(), Box<dyn std::error::Error>
 
     let rng = client.rng();
     let serial_num = rng.inner_mut().draw_word();
-    let secret = rng.inner_mut().draw_word();
+    // let secret = rng.inner_mut().draw_word();
+    // let secret = rng.inner_mut().draw_word();
+    let secret = [
+        Felt::new(1209008168),
+        Felt::new(1192048525),
+        Felt::new(1539272724),
+        Felt::new(1649632662),
+    ];
 
     println!("serial_num: {:?}", serial_num);
     println!("secret: {:?}", secret);
@@ -59,7 +66,7 @@ async fn create_and_open_gift_success() -> Result<(), Box<dyn std::error::Error>
         alice_account.id(),
         Asset::Fungible(FungibleAsset::new(faucet.id(), gift_amount).unwrap()),
         secret,
-        serial_num,
+        serial_num.to_vec().try_into().unwrap(),
     )?;
 
     // turn note into output note
@@ -87,7 +94,10 @@ async fn create_and_open_gift_success() -> Result<(), Box<dyn std::error::Error>
 
     // now bob need to open the gift
     let consume_req = TransactionRequestBuilder::new()
-        .unauthenticated_input_notes([(gift_note, secret.into())])
+        .unauthenticated_input_notes([(
+            gift_note,
+            Some(Word::new(secret.to_vec().try_into().unwrap())),
+        )])
         .build()
         .unwrap();
 
@@ -170,8 +180,8 @@ async fn open_gift_with_wrong_secret() {
     let gift_note = create_gift_note_recallable(
         alice_account.id(),
         Asset::Fungible(FungibleAsset::new(faucet.id(), 100).unwrap()),
-        secret,
-        serial_num,
+        secret.to_vec().try_into().unwrap(),
+        serial_num.to_vec().try_into().unwrap(),
     )
     .unwrap();
 
@@ -198,7 +208,7 @@ async fn open_gift_with_wrong_secret() {
     let consume_req = TransactionRequestBuilder::new()
         .unauthenticated_input_notes([(
             gift_note,
-            Some([Felt::new(1), secret[0], secret[1], secret[2]]),
+            Some(Word::new([Felt::new(1), secret[0], secret[1], secret[2]]).into()),
         )])
         .build()
         .unwrap();
