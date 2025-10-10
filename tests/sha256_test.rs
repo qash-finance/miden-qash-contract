@@ -76,7 +76,7 @@ async fn sha256_test() -> Result<(), Box<dyn std::error::Error>> {
     let sha256_note = create_sha256_note(
         account.id(),
         result_words.iter().map(|&x| Felt::new(x as u64)).collect(),
-        serial_num,
+        serial_num.to_vec().try_into().unwrap(),
     )?;
 
     let output_note = OutputNote::Full(sha256_note.clone());

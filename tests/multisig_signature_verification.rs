@@ -61,11 +61,10 @@ async fn signature_verification() -> Result<(), ClientError> {
         vec![],
         NoteType::Public,
         Felt::new(0),
-        &mut RpoRandomCoin::new(prepare_felt_vec(1)),
+        &mut RpoRandomCoin::new(Word::new(prepare_felt_vec(1))),
     )
     .unwrap();
     let output_notes = OutputNotes::new(vec![OutputNote::Full(note.clone())]).unwrap();
-    let output_notes_commitment = output_notes.commitment();
 
     Ok(())
 }

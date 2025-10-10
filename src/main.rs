@@ -1,6 +1,6 @@
 use masm_project_template::common::{create_no_auth_faucet, instantiate_client};
 use miden_client::{
-    account::{AccountId, AccountStorageMode},
+    account::{AccountId, AccountIdAddress, AccountStorageMode, Address, AddressInterface},
     asset::FungibleAsset,
     note::NoteType,
     rpc::Endpoint,
@@ -20,22 +20,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // deploy fungible assets without the need of auth
     let account = create_no_auth_faucet(
         &mut client,
-        "QLAB",
+        "USDC",
         1000000000000000000,
         8,
         AccountStorageMode::Public,
     )
     .await?;
 
-    println!("account: {:?}", account.id().to_bech32(NetworkId::Testnet));
+    let addr = AccountIdAddress::new(account.id(), AddressInterface::Unspecified);
+
+    // build address of faucet
+    let address = Address::AccountId(addr);
+    println!("account: {:?}", address.to_bech32(NetworkId::Testnet));
+
+    let addr = Address::from_bech32("mtst1qrcgpm44eqhumyq2z4d2hdqeu3cqqm3wm8t")
+        .unwrap()
+        .1;
+
+    // Extract account ID from the address
+    let account_id = match addr {
+        Address::AccountId(account_id_address) => account_id_address.id(),
+        _ => panic!("Invalid address"),
+    };
 
     // mint qash to
     let transaction_request = TransactionRequestBuilder::new()
         .build_mint_fungible_asset(
-            FungibleAsset::new(account.id(), 100).unwrap(),
-            AccountId::from_bech32("mtst1qps470fhfg77kyzc2k0he44g8uem0yyy")
-                .unwrap()
-                .1,
+            FungibleAsset::new(account.id(), 100000000000000).unwrap(),
+            account_id,
             NoteType::Public,
             client.rng(),
         )
@@ -45,6 +57,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .new_transaction(account.id(), transaction_request)
         .await?;
     client.submit_transaction(tx_execution_result).await?;
-    println!("Minted 100 tokens for mtst1qps470fhfg77kyzc2k0he44g8uem0yyy.",);
+    println!("Minted 100 tokens for mtst1qqz3juvzmjc7uyrmqt7wekjaf9cqz95nmex.",);
     Ok(())
 }

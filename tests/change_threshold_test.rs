@@ -27,10 +27,7 @@ async fn change_threshold_success() -> Result<(), Box<dyn std::error::Error>> {
         _original_signer_secret_keys,
     ) = initialize_client_and_multisig().await?;
 
-    println!(
-        "📄 Multisig contract ID: {}",
-        multisig_contract.id().to_bech32(NetworkId::Testnet)
-    );
+    println!("📄 Multisig contract ID: {}", multisig_contract.id());
 
     // -------------------------------------------------------------------------
     // STEP 1: Prepare the Script for change threshold
@@ -50,7 +47,7 @@ async fn change_threshold_success() -> Result<(), Box<dyn std::error::Error>> {
     // insert new threshold into advice map at index 0
     advice_map.insert(
         prepare_felt_vec(NEW_THRESHOLD_AS_KEY_SLOT as u64).into(),
-        prepare_felt_vec(4).into(),
+        prepare_felt_vec(4).to_vec(),
     );
 
     // -------------------------------------------------------------------------
@@ -100,10 +97,7 @@ async fn change_threshold_with_same_threshold() {
         _original_signer_secret_keys,
     ) = initialize_client_and_multisig().await.unwrap();
 
-    println!(
-        "📄 Multisig contract ID: {}",
-        multisig_contract.id().to_bech32(NetworkId::Testnet)
-    );
+    println!("📄 Multisig contract ID: {}", multisig_contract.id());
 
     // -------------------------------------------------------------------------
     // STEP 1: Prepare the Script for change threshold
@@ -123,7 +117,7 @@ async fn change_threshold_with_same_threshold() {
     // insert new threshold into advice map at index 0
     advice_map.insert(
         prepare_felt_vec(NEW_THRESHOLD_AS_KEY_SLOT as u64).into(),
-        prepare_felt_vec(3).into(),
+        prepare_felt_vec(3).to_vec(),
     );
 
     // -------------------------------------------------------------------------
@@ -168,7 +162,7 @@ async fn change_threshold_with_invalid_threshold() {
     // insert new threshold into advice map at index 0
     advice_map.insert(
         prepare_felt_vec(NEW_THRESHOLD_AS_KEY_SLOT as u64).into(),
-        prepare_felt_vec(100).into(),
+        prepare_felt_vec(100).to_vec(),
     );
 
     // -------------------------------------------------------------------------

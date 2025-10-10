@@ -1,7 +1,7 @@
 use miden_client::{
-    Client, ClientError, Felt, Word, ZERO,
+    Client as MidenClient, ClientError, DebugMode, Felt, ScriptBuilder, Word, ZERO,
     account::{
-        Account, AccountBuilder, AccountId, AccountStorageMode, AccountType, StorageMap,
+        Account, AccountBuilder, AccountId, AccountStorageMode, AccountType, NetworkId, StorageMap,
         StorageSlot,
     },
     asset::{Asset, FungibleAsset, TokenSymbol},
@@ -16,17 +16,16 @@ use miden_client::{
     rpc::{Endpoint, TonicRpcClient},
     transaction::{OutputNote, TransactionRequestBuilder, TransactionScript},
 };
-use miden_lib::{
-    account::{auth::RpoFalcon512, faucets::BasicFungibleFaucet, wallets::BasicWallet},
-    transaction::TransactionKernel,
+use miden_lib::account::{
+    auth::{self, AuthRpoFalcon512},
+    faucets::BasicFungibleFaucet,
+    wallets::BasicWallet,
 };
+use miden_lib::transaction::TransactionKernel;
 use miden_objects::{
-    Hasher,
+    Hasher, NoteError,
+    account::AccountComponent,
     assembly::{Assembler, DefaultSourceManager, Library, LibraryPath, Module, ModuleKind},
-};
-use miden_objects::{
-    NoteError,
-    account::{AccountComponent, NetworkId},
     vm::AdviceMap,
 };
 use rand::{RngCore, rngs::StdRng};
@@ -34,11 +33,14 @@ use serde::de::value::Error;
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
 };
-use std::{sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::constants::{MULTISIG_CODE_PATH, NETWORK_ID, SIGNER_WEIGHTS, THRESHOLD, TOTAL_WEIGHT};
+
+type Client = MidenClient<FilesystemKeyStore<rand::prelude::StdRng>>;
 
 // Clears keystore & default sqlite file
 pub async fn delete_keystore_and_store() {
@@ -69,6 +71,21 @@ pub async fn delete_keystore_and_store() {
     }
 }
 
+pub fn create_library(
+    account_code: String,
+    library_path: &str,
+) -> Result<Library, Box<dyn std::error::Error>> {
+    let assembler: Assembler = TransactionKernel::assembler().with_debug_mode(true);
+    let source_manager = Arc::new(DefaultSourceManager::default());
+    let module = Module::parser(ModuleKind::Library).parse_str(
+        LibraryPath::new(library_path)?,
+        account_code,
+        &source_manager,
+    )?;
+    let library = assembler.clone().assemble_library([module])?;
+    Ok(library)
+}
+
 // Helper to instantiate Client
 pub async fn instantiate_client(
     endpoint: Endpoint,
@@ -80,7 +97,7 @@ pub async fn instantiate_client(
     let client = ClientBuilder::new()
         .rpc(rpc_api.clone())
         .filesystem_keystore("./keystore")
-        .in_debug_mode(true)
+        .in_debug_mode(DebugMode::Enabled)
         .build()
         .await?;
 
@@ -136,22 +153,6 @@ pub async fn initialize_client_and_multisig()
     ))
 }
 
-// Creates library
-pub fn create_library(
-    account_code: String,
-    library_path: &str,
-) -> Result<miden_objects::assembly::Library, Box<dyn std::error::Error>> {
-    let assembler = TransactionKernel::assembler().with_debug_mode(true);
-    let source_manager = Arc::new(DefaultSourceManager::default());
-    let module = Module::parser(ModuleKind::Library).parse_str(
-        LibraryPath::new(library_path)?,
-        account_code,
-        &source_manager,
-    )?;
-    let library = assembler.clone().assemble_library([module])?;
-    Ok(library)
-}
-
 // Creates public note
 pub async fn create_public_note(
     client: &mut Client,
@@ -160,13 +161,11 @@ pub async fn create_public_note(
     creator_account: Account,
     assets: NoteAssets,
 ) -> Result<Note, Error> {
-    let assembler = TransactionKernel::assembler()
-        .with_library(&account_library)
-        .unwrap()
-        .with_debug_mode(true);
+    let assembler = TransactionKernel::assembler().with_debug_mode(true);
     let rng = client.rng();
     let serial_num = rng.inner_mut().draw_word();
-    let note_script = NoteScript::compile(note_code, assembler).unwrap();
+    let program = assembler.clone().assemble_program(note_code).unwrap();
+    let note_script = NoteScript::new(program);
     let note_inputs = NoteInputs::new([].to_vec()).unwrap();
     let recipient = NoteRecipient::new(serial_num, note_script, note_inputs.clone());
     let tag = NoteTag::for_public_use_case(0, 0, NoteExecutionMode::Local).unwrap();
@@ -209,7 +208,7 @@ pub async fn create_basic_faucet(
     let builder = AccountBuilder::new(init_seed)
         .account_type(AccountType::FungibleFaucet)
         .storage_mode(AccountStorageMode::Public)
-        .with_auth_component(RpoFalcon512::new(key_pair.public_key()))
+        .with_auth_component(auth::NoAuth)
         .with_component(BasicFungibleFaucet::new(symbol, decimals, max_supply).unwrap());
     let (account, seed) = builder.build().unwrap();
     client.add_account(&account, Some(seed), false).await?;
@@ -231,7 +230,7 @@ pub async fn create_basic_account(
     let builder = AccountBuilder::new(init_seed)
         .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Public)
-        .with_auth_component(RpoFalcon512::new(key_pair.public_key().clone()))
+        .with_auth_component(AuthRpoFalcon512::new(key_pair.public_key().clone()))
         .with_component(BasicWallet);
     let (account, seed) = builder.build().unwrap();
     client.add_account(&account, Some(seed), false).await?;
@@ -260,13 +259,13 @@ pub async fn create_multisig_account(
     for (i, pub_key) in signer_pub_keys.iter().enumerate() {
         let weight = signer_weights[i];
         storage_map_signers.insert(
-            pub_key.into(),
-            [
+            *pub_key,
+            Word::new([
                 Felt::new(weight as u64),
                 Felt::new(0 as u64),
                 Felt::new(0 as u64),
                 Felt::new(0 as u64),
-            ],
+            ]),
         );
     }
 
@@ -280,8 +279,18 @@ pub async fn create_multisig_account(
         account_code.clone(),
         assembler.clone(),
         vec![
-            StorageSlot::Value([threshold, Felt::new(0), Felt::new(0), Felt::new(0)]),
-            StorageSlot::Value([total_weight, Felt::new(0), Felt::new(0), Felt::new(0)]),
+            StorageSlot::Value(Word::new([
+                threshold,
+                Felt::new(0),
+                Felt::new(0),
+                Felt::new(0),
+            ])),
+            StorageSlot::Value(Word::new([
+                total_weight,
+                Felt::new(0),
+                Felt::new(0),
+                Felt::new(0),
+            ])),
             storage_slot_map_signers,
             storage_slot_map_message_hash,
         ],
@@ -294,7 +303,8 @@ pub async fn create_multisig_account(
 
     let multisig_key_pair = SecretKey::with_rng(client.rng());
 
-    let auth_componnet: AccountComponent = RpoFalcon512::new(multisig_key_pair.public_key()).into();
+    let auth_componnet: AccountComponent =
+        AuthRpoFalcon512::new(multisig_key_pair.public_key()).into();
 
     let (multisig_contract, multisig_seed) = AccountBuilder::new(init_seed)
         .account_type(AccountType::RegularAccountImmutableCode)
@@ -333,13 +343,13 @@ pub async fn create_modular_multisig_account(
     for (i, pub_key) in signer_pub_keys.iter().enumerate() {
         let weight = signer_weights[i];
         storage_map_signers.insert(
-            pub_key.into(),
-            [
+            *pub_key,
+            Word::new([
                 Felt::new(weight as u64),
                 Felt::new(0 as u64),
                 Felt::new(0 as u64),
                 Felt::new(0 as u64),
-            ],
+            ]),
         );
     }
 
@@ -353,8 +363,18 @@ pub async fn create_modular_multisig_account(
         account_code.clone(),
         assembler.clone(),
         vec![
-            StorageSlot::Value([threshold, Felt::new(0), Felt::new(0), Felt::new(0)]),
-            StorageSlot::Value([total_weight, Felt::new(0), Felt::new(0), Felt::new(0)]),
+            StorageSlot::Value(Word::new([
+                threshold,
+                Felt::new(0),
+                Felt::new(0),
+                Felt::new(0),
+            ])),
+            StorageSlot::Value(Word::new([
+                total_weight,
+                Felt::new(0),
+                Felt::new(0),
+                Felt::new(0),
+            ])),
             storage_slot_map_signers,
             storage_slot_map_message_hash,
         ],
@@ -368,12 +388,12 @@ pub async fn create_modular_multisig_account(
     let whitelisting_component = AccountComponent::compile(
         whitelisting_code.clone(),
         assembler.clone(),
-        vec![StorageSlot::Value([
+        vec![StorageSlot::Value(Word::new([
             threshold,
             Felt::new(0),
             Felt::new(0),
             Felt::new(0),
-        ])],
+        ]))],
     )
     .unwrap()
     .with_supports_all_types();
@@ -384,12 +404,12 @@ pub async fn create_modular_multisig_account(
     let spending_limit_component = AccountComponent::compile(
         spending_limit_code.clone(),
         assembler.clone(),
-        vec![StorageSlot::Value([
+        vec![StorageSlot::Value(Word::new([
             threshold,
             Felt::new(0),
             Felt::new(0),
             Felt::new(0),
-        ])],
+        ]))],
     )
     .unwrap()
     .with_supports_all_types();
@@ -399,7 +419,8 @@ pub async fn create_modular_multisig_account(
 
     let multisig_key_pair = SecretKey::with_rng(client.rng());
 
-    let auth_componnet: AccountComponent = RpoFalcon512::new(multisig_key_pair.public_key()).into();
+    let auth_componnet: AccountComponent =
+        AuthRpoFalcon512::new(multisig_key_pair.public_key()).into();
 
     let (multisig_contract, multisig_seed) = AccountBuilder::new(init_seed)
         .account_type(AccountType::RegularAccountImmutableCode)
@@ -426,16 +447,17 @@ pub fn create_tx_script(
     script_code: String,
     library: Option<Library>,
 ) -> Result<TransactionScript, Error> {
-    let assembler = TransactionKernel::assembler();
+    if let Some(lib) = library {
+        return Ok(ScriptBuilder::new(true)
+            .with_dynamically_linked_library(&lib)
+            .unwrap()
+            .compile_tx_script(script_code)
+            .unwrap());
+    };
 
-    let assembler = match library {
-        Some(lib) => assembler.with_library(&lib),
-        None => Ok(assembler.with_debug_mode(true)),
-    }
-    .unwrap();
-    let tx_script = TransactionScript::compile(script_code, assembler).unwrap();
-
-    Ok(tx_script)
+    Ok(ScriptBuilder::new(true)
+        .compile_tx_script(script_code)
+        .unwrap())
 }
 
 pub fn generate_keypairs(num_keys: usize, client: &mut Client) -> (Vec<SecretKey>, Vec<Word>) {
@@ -489,10 +511,8 @@ pub fn prepare_script(
     library_path: &str,
 ) -> Result<TransactionScript, Error> {
     let script_code = fs::read_to_string(Path::new(script_path)).unwrap();
-
     let account_code = fs::read_to_string(Path::new(account_code_path)).unwrap();
-
-    let library = create_library(account_code, library_path).unwrap();
+    let library = create_library(library_path.to_string(), &account_code).unwrap();
 
     let tx_script = create_tx_script(script_code, Some(library)).unwrap();
 
@@ -628,7 +648,10 @@ pub fn create_gift_note_recallable(
         .unwrap_or_else(|err| panic!("Error reading {}: {}", path.display(), err));
 
     let assembler = TransactionKernel::assembler().with_debug_mode(true);
-    let note_script = NoteScript::compile(note_code, assembler).unwrap();
+
+    let program = assembler.clone().assemble_program(note_code).unwrap();
+    let note_script = NoteScript::new(program);
+
     let note_type = NoteType::Public;
 
     let gift_tag = NoteTag::for_public_use_case(0, 0, NoteExecutionMode::Local)?;
@@ -656,7 +679,7 @@ pub fn create_gift_note_recallable(
     )?;
 
     let assets = NoteAssets::new(vec![offered_asset])?;
-    let recipient = NoteRecipient::new(serial_num, note_script.clone(), inputs.clone());
+    let recipient = NoteRecipient::new(serial_num.into(), note_script.clone(), inputs.clone());
     let note = Note::new(assets.clone(), metadata, recipient.clone());
 
     println!(
@@ -687,7 +710,8 @@ pub fn create_sha256_note(
         .unwrap_or_else(|err| panic!("Error reading {}: {}", path.display(), err));
 
     let assembler = TransactionKernel::assembler().with_debug_mode(true);
-    let note_script = NoteScript::compile(note_code, assembler).unwrap();
+    let program = assembler.clone().assemble_program(note_code).unwrap();
+    let note_script = NoteScript::new(program);
     let note_type = NoteType::Public;
 
     let gift_tag = NoteTag::for_public_use_case(0, 0, NoteExecutionMode::Local)?;
@@ -703,7 +727,7 @@ pub fn create_sha256_note(
     )?;
 
     let assets = NoteAssets::new(vec![])?;
-    let recipient = NoteRecipient::new(serial_num, note_script.clone(), inputs.clone());
+    let recipient = NoteRecipient::new(serial_num.into(), note_script.clone(), inputs.clone());
     let note = Note::new(assets.clone(), metadata, recipient.clone());
 
     println!(
@@ -747,7 +771,7 @@ pub async fn create_no_auth_faucet(
     let (new_account, seed) = AccountBuilder::new(init_seed)
         .account_type(AccountType::FungibleFaucet)
         .storage_mode(storage_mode.into())
-        .with_auth_component(no_auth_component)
+        .with_auth_component(auth::NoAuth)
         .with_component(BasicFungibleFaucet::new(symbol, decimals, Felt::new(max_supply)).unwrap())
         .build()
         .unwrap();

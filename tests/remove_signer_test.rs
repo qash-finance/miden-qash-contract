@@ -42,7 +42,7 @@ async fn remove_signer_success() -> Result<(), Box<dyn std::error::Error>> {
     // insert new threshold into advice map at index 0
     advice_map.insert(
         prepare_felt_vec(SIGNER_TO_REMOVE_KEY_SLOT as u64).into(),
-        original_signer_pub_keys[SIGNER_TO_REMOVE_INDEX].into(),
+        original_signer_pub_keys[SIGNER_TO_REMOVE_INDEX].to_vec(),
     );
 
     // -------------------------------------------------------------------------
@@ -112,7 +112,7 @@ async fn remove_signer_with_non_signer() {
     // insert new threshold into advice map at index 0
     advice_map.insert(
         prepare_felt_vec(SIGNER_TO_REMOVE_KEY_SLOT as u64).into(),
-        random_pub_key.into(),
+        random_pub_key.to_vec(),
     );
 
     // -------------------------------------------------------------------------
@@ -153,7 +153,7 @@ async fn remove_signer_causing_threshold_unreachable() {
     // insert new threshold into advice map at index 0
     advice_map.insert(
         prepare_felt_vec(SIGNER_TO_REMOVE_KEY_SLOT as u64).into(),
-        original_signer_pub_keys[SIGNER_TO_REMOVE_CANT_REACH_THRESHOLD_INDEX].into(),
+        original_signer_pub_keys[SIGNER_TO_REMOVE_CANT_REACH_THRESHOLD_INDEX].to_vec(),
     );
 
     // -------------------------------------------------------------------------
