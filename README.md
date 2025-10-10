@@ -1,4 +1,4 @@
-# MASM Weighted Multisig
+# MASM Experiments
 
 A minimal example for compiling, deploying, and testing MASM contracts & notes, featuring a weighted multisig account.
 
