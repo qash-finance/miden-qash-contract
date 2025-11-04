@@ -5,12 +5,16 @@ edition = "2024"
 default-run = "masm-project-template"
 
 [dependencies]
-miden-client = { version = "0.11.9", features = ["testing", "tonic", "sqlite"] }
+miden-client = { version = "0.11.11", features = [
+    "testing",
+    "tonic",
+    "sqlite",
+] }
 miden-lib = { version = "0.11.5", default-features = false }
 miden-objects = { version = "0.11.5", default-features = false }
-miden-crypto = { version = "0.17.0", features = ["executable"] }
+miden-crypto = { version = "0.18.0", features = ["executable"] }
 miden-tx = "0.11.5"
-miden-assembly = "0.18.1"
+miden-assembly = "0.19.0"
 rand = { version = "0.9" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
@@ -23,3 +27,9 @@ tokio = { version = "1.40", features = [
 rand_chacha = "0.9.0"
 sha2 = "0.10.9"
 hex = "0.4.3"
+anyhow = "1.0"
+thiserror = { default-features = false, version = "2.0" }
+url = "2.5"
+
+[dev-dependencies]
+miden-testing = "0.11"

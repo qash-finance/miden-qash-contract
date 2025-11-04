@@ -1,6 +1,6 @@
 use masm_project_template::common::{create_no_auth_faucet, instantiate_client};
 use miden_client::{
-    account::{AccountId, AccountIdAddress, AccountStorageMode, Address, AddressInterface},
+    account::{AccountIdAddress, AccountStorageMode, Address, AddressInterface},
     asset::FungibleAsset,
     note::NoteType,
     rpc::Endpoint,
@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // deploy fungible assets without the need of auth
     let account = create_no_auth_faucet(
         &mut client,
-        "USDC",
+        "QWAP",
         1000000000000000000,
         8,
         AccountStorageMode::Public,
@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let address = Address::AccountId(addr);
     println!("account: {:?}", address.to_bech32(NetworkId::Testnet));
 
-    let addr = Address::from_bech32("mtst1qrcgpm44eqhumyq2z4d2hdqeu3cqqm3wm8t")
+    let addr = Address::from_bech32("mtst1qzx905defy842yr7sgnh7pxpqpcqq86aypm")
         .unwrap()
         .1;
 
@@ -57,6 +57,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .new_transaction(account.id(), transaction_request)
         .await?;
     client.submit_transaction(tx_execution_result).await?;
-    println!("Minted 100 tokens for mtst1qqz3juvzmjc7uyrmqt7wekjaf9cqz95nmex.",);
+    println!("Minted 100 tokens for mtst1qzx905defy842yr7sgnh7pxpqpcqq86aypm.",);
     Ok(())
 }

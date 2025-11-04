@@ -6,7 +6,7 @@ A playground for playing around MASM and rust client
 
 ## Table of Contents
 
-- [MASM Weighted Multisig](#masm-weighted-multisig)
+- [MASM Experiments](#masm-experiments)
   - [Table of Contents](#table-of-contents)
   - [Running All Tests](#running-all-tests)
   - [Deployment](#deployment)
